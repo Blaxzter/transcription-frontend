@@ -18,19 +18,25 @@ from tinydb import TinyDB
 from dotenv import load_dotenv
 from tinydb import Query
 
+from threading import Thread
+
 load_dotenv()
 
 app = FastAPI()
 origins = [
     "http://localhost",
     "http://localhost:5173",
+    "https://transcribe.fabraham.dev",
+    "https://transcribe.fabraham.dev:6544",
+    "https://transcribe-api.fabraham.dev",
+    "https://transcribe-api.fabraham.dev:6544",
 ]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins = origins,
+    allow_credentials = True,
+    allow_methods = ["*"],
+    allow_headers = ["*"],
 )
 
 file_path = os.path.dirname(__file__)
@@ -62,7 +68,8 @@ headers = {
 }
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl = "token")
-last_request: datetime.date = datetime.utcnow()
+last_request: datetime.date = None
+transcription_in_progress = False
 
 
 class Token(BaseModel):
@@ -135,21 +142,15 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-@app.post("/transcribe", dependencies = [Depends(get_current_user)])
-async def upload_audio_file(file: UploadFile = File(...)):
-    # Rest of the code...
-    audio_bytes = await file.read()
-    audio_data = base64.b64encode(audio_bytes).decode()
+def start_transcription_process(transcript_id, audio_data, file_name):
+    global transcription_in_progress
+    transcription_in_progress = transcript_id
 
     data_dict = json.dumps(
         {"inputs": [], "audio_data": audio_data, "options": {"task": "transcribe", "language": "<|de|>"}})
     response = requests.post(HUGGINGFACE_API_URL, headers = headers, data = data_dict)
 
     # store audio file in 'audio_files' under name uuid
-    transcript_id = str(uuid.uuid4())
-    with open(os.path.join(file_path, 'audio_files', transcript_id), 'wb') as f:
-        f.write(audio_bytes)
-
     global last_request
     last_request = datetime.utcnow()
     result = json.loads(response.json())
@@ -161,13 +162,33 @@ async def upload_audio_file(file: UploadFile = File(...)):
         'id': transcript_id,
         'text': text,
         'chunks': chunks,
-        'file_name': file.filename,
-        'transcription_name': f'{file.filename} - {datetime.now().strftime("%d.%m.%Y %H:%M:%S")}',
+        'file_name': file_name,
+        'transcription_name': f'{file_name} - {datetime.now().strftime("%d.%m.%Y %H:%M:%S")}',
         'created_at': datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
     }
     transcripts.insert(data)
 
-    return data
+    transcription_in_progress = None
+
+
+@app.post("/transcribe", dependencies = [Depends(get_current_user)])
+async def upload_audio_file(file: UploadFile = File(...)):
+    # Rest of the code...
+    audio_bytes = await file.read()
+
+    if transcription_in_progress:
+        raise HTTPException(status_code = 400, detail = "Transcription already in progress")
+
+    audio_data = base64.b64encode(audio_bytes).decode()
+
+    transcript_id = str(uuid.uuid4())
+    thread = Thread(target = start_transcription_process, args = (transcript_id, audio_data, file.filename, ))
+    thread.start()
+
+    with open(os.path.join(file_path, 'audio_files', transcript_id), 'wb') as f:
+        f.write(audio_bytes)
+
+    return {"transcription_id": transcript_id}
 
 
 @app.get("/transcriptions", dependencies = [Depends(get_current_user)])
@@ -177,6 +198,10 @@ async def get_transcriptions():
 
 @app.get("/transcriptions/{transcript_id}", dependencies = [Depends(get_current_user)])
 async def get_transcription(transcript_id: str):
+    global transcription_in_progress
+    if transcription_in_progress == transcript_id:
+        raise HTTPException(status_code = 202, detail = "Transcription in progress")
+
     # check if transcript exists
     if not transcripts.contains(transcript_model.id == transcript_id):
         raise HTTPException(status_code = 404, detail = "Transcription not found")
@@ -217,28 +242,31 @@ async def delete_transcriptions(transcript_id: str):
 @app.get("/server_status")
 async def health():
     global last_request
+    global transcription_in_progress
     if last_request is None:
-        return {"status": "offline"}
+        return {"status": "offline", "transcription_in_progress": transcription_in_progress}
     else:
         if datetime.utcnow() - last_request > timedelta(minutes = 15):
-            return {"status": "offline"}
+            return {"status": "offline", "transcription_in_progress": transcription_in_progress}
         else:
-            return {"status": "online"}
+            return {"status": "online", "transcription_in_progress": transcription_in_progress}
 
 
-@app.post("/live_server_status")
+@app.get("/live_server_status")
 async def start_server():
     # Send arbitrary data to start server and check if it is online = code different from 502
     data_dict = json.dumps({"inputs": [], "options": {"task": "start_server"}})
     response = requests.post(HUGGINGFACE_API_URL, headers = headers, data = data_dict)
     if response.status_code != 502:
-        return {"status": "ok"}
-    
-    global last_request
-    last_request = datetime.utcnow()
+        global last_request
+        last_request = datetime.utcnow()
+        return {"status": "online"}
+
     return {"status": "error"}
+
 
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host = "localhost", port = 6545)
+    host = os.getenv('HOST', 'localhost')
+    uvicorn.run(app, host = host, port = 6545)

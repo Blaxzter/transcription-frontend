@@ -5,9 +5,10 @@ import RegionsPlugin from 'wavesurfer.js/plugins/regions'
 
 import HoverPlugin from 'wavesurfer.js/plugins/hover'
 import MinimapPlugin from 'wavesurfer.js/plugins/minimap'
-import axios from "axios";
+import axios from 'axios'
 
 import audioBufferToWav from 'audiobuffer-to-wav'
+import router from '@/router'
 
 export default {
   name: 'WaveFormComponent',
@@ -27,8 +28,14 @@ export default {
     // Load  audio file
     loading_finished: false,
     loading_percentage: 0,
-    loading_intermediate: false
+    loading_intermediate: false,
+
+    // status
+    status: 'idle',
+    upload_progress: 0,
+    last_transcript: null
   }),
+  emits: ['transcription_created'],
   props: {
     file: {
       type: Object,
@@ -37,6 +44,11 @@ export default {
     url: {
       type: String,
       required: false
+    },
+    only_view: {
+      type: Boolean,
+      required: false,
+      default: false
     }
   },
   mounted() {
@@ -112,6 +124,9 @@ export default {
     if (this.url) {
       this.wavesurfer.on('loading', (percentage) => {
         console.log('loading', percentage)
+        if (percentage === 100) {
+          this.loading_intermediate = true
+        }
         this.loading_percentage = percentage
       })
       this.wavesurfer.load(this.url)
@@ -126,70 +141,116 @@ export default {
   },
   computed: {
     loading_percentage_rounded() {
-      return Math.round(this.loading_percentage * 100)
+      return this.loading_percentage
+    },
+    upload_progress_rounded() {
+      return this.upload_progress
     }
   },
   methods: {
+    open_transcript() {
+      console.log(this.last_transcript)
+      this.user.set_user_file(this.file)
+      router.replace({
+        name: 'transcription',
+        params: {
+          transcription_id: this.last_transcript.id
+        }
+      })
+    },
     async uploadFile() {
+      this.status = 'cutting'
 
       const start = this.region.start
       const end = this.region.end
 
       // Read the file as a blob
-      const reader = new FileReader();
+      const reader = new FileReader()
       reader.onload = (event) => {
         // Convert blob to ArrayBuffer
-        const arrayBuffer = event.target.result;
+        const arrayBuffer = event.target.result
 
         // Decode the audio data
-        const audioContext = new AudioContext();
+        const audioContext = new AudioContext()
         audioContext.decodeAudioData(arrayBuffer, async (buffer) => {
           // Extract the desired segment
-          const numberOfChannels = buffer.numberOfChannels;
-          const sampleRate = buffer.sampleRate;
-          const startOffset = Math.floor(start * sampleRate);
-          const endOffset = Math.floor(end * sampleRate);
-          const newBuffer = audioContext.createBuffer(numberOfChannels, endOffset - startOffset, sampleRate);
+          const numberOfChannels = buffer.numberOfChannels
+          const sampleRate = buffer.sampleRate
+          const startOffset = Math.floor(start * sampleRate)
+          const endOffset = Math.floor(end * sampleRate)
+          const newBuffer = audioContext.createBuffer(
+            numberOfChannels,
+            endOffset - startOffset,
+            sampleRate
+          )
 
           for (let channel = 0; channel < numberOfChannels; channel++) {
-            const oldChannelData = buffer.getChannelData(channel);
-            const newChannelData = newBuffer.getChannelData(channel);
+            const oldChannelData = buffer.getChannelData(channel)
+            const newChannelData = newBuffer.getChannelData(channel)
             for (let i = startOffset; i < endOffset; i++) {
-              newChannelData[i - startOffset] = oldChannelData[i];
+              newChannelData[i - startOffset] = oldChannelData[i]
             }
           }
 
           // Encode the segment to WAV format
           // This function needs to be defined to convert the audio buffer to WAV or other desired format
-          const wavArrayBuffer = audioBufferToWav(newBuffer);
-          const wavBlob = new Blob([wavArrayBuffer], { type: 'audio/wav' });
+          const wavArrayBuffer = audioBufferToWav(newBuffer)
+          const wavBlob = new Blob([wavArrayBuffer], { type: 'audio/wav' })
           // Create FormData and append the audio segment
-          const formData = new FormData();
-          formData.append('file', wavBlob, `${this.file.name}.wav`);
+          const formData = new FormData()
+          formData.append('file', wavBlob, `${this.file.name}`)
 
           // Now you can upload the formData using fetch or any other AJAX method
+          this.status = 'uploading'
 
           await axios
-              .post(`http://localhost:6545/transcribe`, formData, {
-                headers: {
-                  'content-type': 'multipart/form-data', // do not forget this
-                  Authorization: 'Bearer ' + this.user.get_user
-                }
-              })
-              .then((response) => {
-                this.$emit('transcription_created', response.data)
-              })
-              .catch((err) => {
-                console.log(err)
-              })
-        });
-      };
+            .post(`http://localhost:6545/transcribe`, formData, {
+              headers: {
+                'content-type': 'multipart/form-data', // do not forget this
+                Authorization: 'Bearer ' + this.user.get_user
+              },
+              onUploadProgress: (progressEvent) => {
+                this.upload_progress = Math.round(
+                  (progressEvent.loaded / progressEvent.total) * 100
+                )
+              }
+            })
+            .then((response) => {
+              this.status = 'transcribing'
+              this.start_check_for_update(response.data.transcription_id)
+            })
+            .catch((err) => {
+              this.status = 'error'
+              console.log(err)
+            })
+        })
+      }
 
       // Read the audio file as an ArrayBuffer
-      reader.readAsArrayBuffer(this.file);
+      reader.readAsArrayBuffer(this.file)
+    },
+    start_check_for_update(transcription_id) {
+      const interval = setInterval(() => {
+        axios
+          .get(`http://localhost:6545/transcriptions/${transcription_id}`)
+          .then((response) => {
+            console.log(response)
+            if (response.status === 202) {
+              console.log("Waiting for transcription to finish")
+            } else {
+              this.status = 'done'
+              this.last_transcript = response.data
+              clearInterval(interval)
+            }
+          })
+          .catch((err) => {
+            console.log(err)
+            this.status = 'error'
+            clearInterval(interval)
+          })
+      }, 1000)
     },
     onWheel: function (e) {
-
       let delta = -Math.max(-1, Math.min(1, e.deltaY))
       this.zoom_level = this.zoom_level + delta
       this.zoom_level = Math.max(0, Math.min(200, this.zoom_level))
@@ -198,14 +259,21 @@ export default {
     playPause() {
       console.log('playPause')
       this.wavesurfer.playPause()
-    },
-  },
+    }
+  }
 }
 </script>
 
 <template>
-  <div>
-    <div v-show="loading_finished" class="mb-5">
+  <div v-show="status === 'idle'">
+    <div v-show="loading_finished">
+      <div v-if="!only_view">
+        <h2 class="mb-5">Audio Datei</h2>
+        <div class="text-body-1">
+          Schiebe den Blauen bereich um die Audio Datei zu trimmen. Mit dem click auf Starte
+          Transkriebierung wird die Datei geschnitten und hochgeladen.
+        </div>
+      </div>
       <div id="waveform" @wheel="onWheel" />
       <div v-if="wavesurfer" class="d-flex">
         <v-btn
@@ -218,9 +286,9 @@ export default {
         </v-btn>
       </div>
     </div>
-    <div v-show="!loading_finished" class="mb-5">
+    <div v-show="!loading_finished">
       <div>
-        <v-alert type="info" border="start" class="mb-5">
+        <v-alert type="info" border="start">
           <span v-if="loading_percentage_rounded < 100">
             Die Audio Datei wird heruntergeladen...
           </span>
@@ -230,23 +298,92 @@ export default {
           </span>
         </v-alert>
       </div>
-      <v-progress-linear
-        v-if="loading_intermediate"
-        :value="loading_percentage_rounded"
-        :indeterminate="true"
-        color="purple"
-        height="12"
-      ></v-progress-linear>
-      <v-progress-linear v-else :value="loading_percentage_rounded" color="purple" height="12">
-        <template v-slot:default="{ value }">
-          <strong>{{ Math.ceil(value) }}%</strong>
-        </template>
-      </v-progress-linear>
+      <div class="mt-5">
+        <v-progress-linear
+          v-if="loading_intermediate"
+          :indeterminate="true"
+          color="success"
+          height="12"
+        ></v-progress-linear>
+        <v-progress-linear v-else v-model="loading_percentage_rounded" color="purple" height="24">
+          <template v-slot:default="{ value }">
+            <strong>{{ Math.ceil(value) }}%</strong>
+          </template>
+        </v-progress-linear>
+      </div>
     </div>
 
-    <v-btn class="w-100" variant="tonal" prepend-icon="mdi-send" @click="uploadFile">
+    <v-btn
+      class="w-100 mt-5"
+      variant="tonal"
+      prepend-icon="mdi-send"
+      @click="uploadFile"
+      v-if="!only_view"
+    >
       Starte Transcribierung
     </v-btn>
+  </div>
+  <div v-show="status === 'cutting'">
+    <div>
+      <v-alert type="info" border="start" class="mb-5" icon="mdi-scissors-cutting">
+        Die Audio Datei wird grade geschnitten.
+      </v-alert>
+    </div>
+  </div>
+  <div v-show="status === 'uploading'">
+    <div>
+      <v-alert type="info" border="start" class="mb-5" icon="mdi-rocket">
+        Die Audio Datei wird grade hochgeladen.
+      </v-alert>
+    </div>
+    <v-progress-linear
+      v-model="upload_progress_rounded"
+      color="purple"
+      height="12"
+    ></v-progress-linear>
+  </div>
+  <div v-show="status === 'transcribing'">
+    <div>
+      <v-alert type="info" border="start" class="mb-5" icon="mdi-transcribe">
+        Die Audio Datei wird grade transcribiert.
+      </v-alert>
+    </div>
+    <v-progress-linear :indeterminate="true" color="purple" height="12"></v-progress-linear>
+  </div>
+  <div v-show="status === 'done'">
+    <div>
+      <v-alert type="success" border="start" class="mb-5" icon="mdi-check">
+        Die Audio Datei wurde erfolgreich transcribiert.
+      </v-alert>
+      <div class="d-flex">
+        <v-btn
+          variant="tonal"
+          color="success"
+          class="flex-grow-1"
+          prepend-icon="mdi-open-in-app"
+          @click="open_transcript"
+        >
+          Öffne Transkriebierung
+        </v-btn>
+        <v-btn
+          class="flex-grow-1 ms-2"
+          color="warning"
+          variant="tonal"
+          prepend-icon="mdi-repeat"
+          @click="this.status = 'idle'"
+        >
+          Neuen Bereich wählen
+        </v-btn>
+      </div>
+    </div>
+  </div>
+  <div v-show="status === 'error'">
+    <div>
+      <v-alert type="error" border="start" class="mb-5" icon="mdi-alert">
+        Es ist ein Fehler aufgetreten.<br />
+        Bitte kontaktiere Freddy.
+      </v-alert>
+    </div>
   </div>
 </template>
 

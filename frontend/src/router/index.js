@@ -21,7 +21,8 @@ const router = createRouter({
       path: '/transcription/:transcription_id',
       name: 'transcription',
       component: () => import('../views/TranscriptionView.vue'),
-      meta: { requiresAuth: true }
+      meta: { requiresAuth: true },
+      props: true
     }
   ]
 })

@@ -14,6 +14,9 @@ dependencies:
   axios:
     specifier: ^1.4.0
     version: 1.4.0
+  dayjs:
+    specifier: ^1.11.9
+    version: 1.11.9
   pinia:
     specifier: ^2.1.4
     version: 2.1.4(vue@3.3.4)
@@ -23,6 +26,9 @@ dependencies:
   vue-router:
     specifier: ^4.2.4
     version: 4.2.4(vue@3.3.4)
+  vue3-toastify:
+    specifier: ^0.1.12
+    version: 0.1.12(vue@3.3.4)
   vuetify:
     specifier: ^3.3.12
     version: 3.3.12(vue@3.3.4)
@@ -643,6 +649,10 @@ packages:
 
   /csstype@3.1.2:
     resolution: {integrity: sha512-I7K1Uu0MBPzaFKg4nI5Q7Vs2t+3gWWW648spaF+Rg7pI9ds18Ugn+lvg4SHczUdKlHI5LWBXyqfS8+DufyBsgQ==}
+
+  /dayjs@1.11.9:
+    resolution: {integrity: sha512-QvzAURSbQ0pKdIye2txOzNaHmxtUBXerpY0FJsFXUMKbIZeFm5ht1LS/jFsrncjnmtv8HsG0W2g6c0zUjZWmpA==}
+    dev: false
 
   /debug@4.3.4:
     resolution: {integrity: sha512-PRWFHuSU3eDtQJPvnNY7Jcket1j0t5OuOsFzPPzsekD52Zl8qUfFIPEiswXqIvHWGVHOgX+7G/vCNNhehwxfkQ==}
@@ -1661,6 +1671,18 @@ packages:
       vue: ^3.2.0
     dependencies:
       '@vue/devtools-api': 6.5.0
+      vue: 3.3.4
+    dev: false
+
+  /vue3-toastify@0.1.12(vue@3.3.4):
+    resolution: {integrity: sha512-OQJPMt6dIpn+1vG+EZMO+QE5STAxoc0+Owo7sRjUyVw22Uxs6daVHq/sek75s4JMxbzePHtUqVfTZRgqLHmikw==}
+    engines: {node: '>=16', npm: '>=7'}
+    peerDependencies:
+      vue: '>=3.2.0'
+    peerDependenciesMeta:
+      vue:
+        optional: true
+    dependencies:
       vue: 3.3.4
     dev: false
 
