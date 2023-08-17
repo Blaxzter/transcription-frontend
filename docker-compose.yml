@@ -28,6 +28,9 @@ services:
       - "6545:6545"
     networks:
       - nginx-net
+    volumes:
+      - "./audio_files": "/build/audio_files"
+      - "./db.json": "/build/db.json"
     environment:
       VIRTUAL_HOST: transcribe-api.fabraham.dev
       LETSENCRYPT_HOST: transcribe-api.fabraham.dev
