@@ -24,6 +24,8 @@ load_dotenv()
 
 app = FastAPI()
 origins = [
+    "http://localhost",
+    "http://localhost:5173",
     "https://transcribe.fabraham.dev",
     "https://transcribe.fabraham.dev:6544",
     "https://transcribe-api.fabraham.dev",
