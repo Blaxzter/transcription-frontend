@@ -113,7 +113,7 @@
           <div v-else>
             <template v-if="start_server_loading">
               <v-alert type="info" border="start" class="text-body-1 mb-5">
-                Der Transcribierungs Server wird gestartet. Das kann einige Sekunden dauern.
+                Der Transcribierungs Server wird gestartet. Das kann einige Sekunden/Minuten dauern.
               </v-alert>
               Laden<span>{{'.'.repeat(start_server_request_amount)}}</span>
 

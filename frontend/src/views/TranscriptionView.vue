@@ -2,6 +2,17 @@
   <v-container :fluid="true">
     <div class="d-flex mb-2 w-100">
       <div class="component d-flex align-center">
+        <v-icon
+          color="primary"
+          size="48"
+          style="vertical-align: middle"
+          @click="router().push({ name: 'home' })"
+        >
+          mdi-home
+        </v-icon>
+      </div>
+
+      <div class="component d-flex align-center">
         <v-icon class="mr-2" color="primary" size="48" style="vertical-align: middle">
           mdi-transcribe
         </v-icon>
@@ -112,6 +123,9 @@ export default {
     }
   },
   methods: {
+    router() {
+      return router
+    },
     async delete_transcription() {
       await axios.delete(
         `${import.meta.env.VITE_BACKEND_URL}/transcriptions/${this.transcription_id}`,

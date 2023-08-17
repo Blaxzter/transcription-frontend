@@ -20,4 +20,3 @@ RUN mkdir audio_files
 
 # Create new user to run app process as unprivilaged user
 CMD ["python", "main.py"]
-EXPOSE 6545
