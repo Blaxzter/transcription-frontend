@@ -1,24 +1,22 @@
 import base64
-import json
 import os
+import uuid
 from datetime import datetime, timedelta
+from threading import Thread
 from typing import Optional
 
 import bcrypt
 import jwt
-import requests
-import uuid
+from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException, File, UploadFile
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from starlette.responses import FileResponse
+from tinydb import Query
 from tinydb import TinyDB
 
-from dotenv import load_dotenv
-from tinydb import Query
-
-from threading import Thread
+from LangModel import LangModel
 
 load_dotenv()
 
@@ -69,8 +67,13 @@ headers = {
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl = "token")
 last_request: datetime.date = None
-transcription_in_progress = False
 
+lang_model = LangModel()
+
+transcription_in_progress = False
+transcription_text = ''
+transcription_chunks = []
+transcription_file_name = ''
 
 class Token(BaseModel):
     access_token: str
@@ -142,33 +145,35 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-def start_transcription_process(transcript_id, audio_data, file_name):
+def start_transcription_process(transcript_id, audio_file_path):
     global transcription_in_progress
     transcription_in_progress = transcript_id
 
-    data_dict = json.dumps(
-        {"inputs": [], "audio_data": audio_data, "options": {"task": "transcribe", "language": "<|de|>"}})
-    response = requests.post(HUGGINGFACE_API_URL, headers = headers, data = data_dict)
+    def end_callback(end_data):
+        global transcription_in_progress
+        global transcription_text
+        global transcription_chunks
+        global transcription_file_name
 
-    # store audio file in 'audio_files' under name uuid
-    global last_request
-    last_request = datetime.utcnow()
-    result = json.loads(response.json())
-    text = result['text']
-    chunks = result['chunks']
+        transcription_text = ''
+        transcription_chunks = []
 
-    # store transcript in 'transcripts' under name uuid
-    data = {
-        'id': transcript_id,
-        'text': text,
-        'chunks': chunks,
-        'file_name': file_name,
-        'transcription_name': f'{file_name} - {datetime.now().strftime("%d.%m.%Y %H:%M:%S")}',
-        'created_at': datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
-    }
-    transcripts.insert(data)
+        # store transcript in 'transcripts' under name uuid
+        data = {
+            'id': transcript_id,
+            'text': transcription_text,
+            'chunks': transcription_chunks,
+            'file_name': transcription_file_name,
+            'transcription_name': f'{transcription_file_name} - {datetime.now().strftime("%d.%m.%Y %H:%M:%S")}',
+            'created_at': datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+        }
+        transcripts.insert(data)
 
-    transcription_in_progress = None
+        transcription_text = ''
+        transcription_chunks = []
+        transcription_in_progress = None
+
+    lang_model.transcribe_text(audio_file_path, transcript_id, end_callback)
 
 
 @app.post("/transcribe", dependencies = [Depends(get_current_user)])
@@ -182,11 +187,12 @@ async def upload_audio_file(file: UploadFile = File(...)):
     audio_data = base64.b64encode(audio_bytes).decode()
 
     transcript_id = str(uuid.uuid4())
-    thread = Thread(target = start_transcription_process, args = (transcript_id, audio_data, file.filename, ))
-    thread.start()
 
-    with open(os.path.join(file_path, 'audio_files', transcript_id), 'wb') as f:
+    audio_file_path = os.path.join(file_path, 'audio_files', transcript_id)
+    with open(audio_file_path, 'wb') as f:
         f.write(audio_bytes)
+
+    start_transcription_process(transcript_id, audio_file_path)
 
     return {"transcription_id": transcript_id}
 
@@ -199,8 +205,38 @@ async def get_transcriptions():
 @app.get("/transcriptions/{transcript_id}", dependencies = [Depends(get_current_user)])
 async def get_transcription(transcript_id: str):
     global transcription_in_progress
+    global transcription_text
+    global transcription_chunks
+    global transcription_file_name
+    global lang_model
+
     if transcription_in_progress == transcript_id:
-        raise HTTPException(status_code = 202, detail = "Transcription in progress")
+        for data, fished in lang_model.empty_process_queue(transcript_id):
+            if fished:
+                if not transcripts.contains(transcript_model.id == transcript_id):
+                    # store transcript in 'transcripts' under name uuid
+                    data = {
+                        'id': transcript_id,
+                        'text': transcription_text,
+                        'chunks': transcription_chunks,
+                        'file_name': transcription_file_name,
+                        'transcription_name': f'{transcription_file_name} - {datetime.now().strftime("%d.%m.%Y %H:%M:%S")}',
+                        'created_at': datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+                    }
+                    transcripts.insert(data)
+
+                    transcription_text = ''
+                    transcription_chunks = []
+                    transcription_in_progress = None
+            else:
+                transcription_text = transcription_text + ' ' + data['text']
+                transcription_chunks.append(dict(
+                    start = data['start'],
+                    end = data['end'],
+                    text = data['text'],
+                ))
+
+        raise HTTPException(status_code = 202, detail = {'text': transcription_text, 'chunks': transcription_chunks})
 
     # check if transcript exists
     if not transcripts.contains(transcript_model.id == transcript_id):
@@ -236,33 +272,6 @@ async def delete_transcriptions(transcript_id: str):
     transcripts.remove(transcript_model.id == transcript_id)
 
     return {"status": "ok"}
-
-
-# route that checks if model is online
-@app.get("/server_status")
-async def health():
-    global last_request
-    global transcription_in_progress
-    if last_request is None:
-        return {"status": "offline", "transcription_in_progress": transcription_in_progress}
-    else:
-        if datetime.utcnow() - last_request > timedelta(minutes = 15):
-            return {"status": "offline", "transcription_in_progress": transcription_in_progress}
-        else:
-            return {"status": "online", "transcription_in_progress": transcription_in_progress}
-
-
-@app.get("/live_server_status")
-async def start_server():
-    # Send arbitrary data to start server and check if it is online = code different from 502
-    data_dict = json.dumps({"inputs": [], "options": {"task": "start_server"}})
-    response = requests.post(HUGGINGFACE_API_URL, headers = headers, data = data_dict)
-    if response.status_code != 502:
-        global last_request
-        last_request = datetime.utcnow()
-        return {"status": "online"}
-
-    return {"status": "error"}
 
 
 if __name__ == "__main__":
