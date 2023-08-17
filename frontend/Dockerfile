@@ -7,6 +7,7 @@ COPY package*.json ./
 
 RUN npm install
 
+COPY .env ./.env
 COPY vite.config.js ./
 COPY index.html ./
 COPY public ./public

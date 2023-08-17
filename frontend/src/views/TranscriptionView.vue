@@ -97,7 +97,7 @@ export default {
     this.file = this.user.get_user_file
     console.log(this.file)
     axios
-      .get(`http://localhost:6545/transcriptions/${this.transcription_id}`)
+      .get(`${import.meta.env.VITE_BACKEND_URL}/transcriptions/${this.transcription_id}`)
       .then((response) => {
         this.transcription = response.data
       }).catch((error) => {
@@ -108,13 +108,13 @@ export default {
   },
   computed: {
     audio_url() {
-      return `http://localhost:6545/audio/${this.transcription_id}`
+      return `${import.meta.env.VITE_BACKEND_URL}/audio/${this.transcription_id}`
     }
   },
   methods: {
     async delete_transcription() {
       await axios.delete(
-        `http://localhost:6545/transcriptions/${this.transcription_id}`,
+        `${import.meta.env.VITE_BACKEND_URL}/transcriptions/${this.transcription_id}`,
       ).then(() => {
         router.push({ name: 'home' })
         toast.info("Transkription wurde erfolgreich gelöscht")

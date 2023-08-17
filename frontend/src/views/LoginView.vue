@@ -89,7 +89,7 @@ export default {
                     const form_data = new FormData();
                     form_data.append('username', this.username);
                     form_data.append('password', this.password);
-                    const response = await axios.post('http://localhost:6545/token', form_data);
+                    const response = await axios.post(`${import.meta.env.VITE_BACKEND_URL}/token`, form_data);
                     if (response.status !== 200) {
                         this.error = true;
                         return;

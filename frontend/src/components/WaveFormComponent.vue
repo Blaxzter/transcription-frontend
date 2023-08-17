@@ -204,7 +204,7 @@ export default {
           this.status = 'uploading'
 
           await axios
-            .post(`http://localhost:6545/transcribe`, formData, {
+            .post(`${import.meta.env.VITE_BACKEND_URL}/transcribe`, formData, {
               headers: {
                 'content-type': 'multipart/form-data', // do not forget this
                 Authorization: 'Bearer ' + this.user.get_user
@@ -232,7 +232,7 @@ export default {
     start_check_for_update(transcription_id) {
       const interval = setInterval(() => {
         axios
-          .get(`http://localhost:6545/transcriptions/${transcription_id}`)
+          .get(`${import.meta.env.VITE_BACKEND_URL}/transcriptions/${transcription_id}`)
           .then((response) => {
             console.log(response)
             if (response.status === 202) {

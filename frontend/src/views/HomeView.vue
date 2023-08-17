@@ -209,7 +209,7 @@ export default {
   },
   mounted() {
     // get server_status
-    axios.get('http://localhost:6545/server_status').then((response) => {
+    axios.get(`${import.meta.env.VITE_BACKEND_URL}/server_status`).then((response) => {
       this.serverStatus = response.data.status === 'online'
       this.server_status_loading = false
       this.transcription_in_progress = response.data.transcription_in_progress
@@ -217,7 +217,7 @@ export default {
         this.get_transcription_in_progress()
     })
     // get previous transcriptions
-    axios.get('http://localhost:6545/transcriptions').then((response) => {
+    axios.get(`${import.meta.env.VITE_BACKEND_URL}/transcriptions`).then((response) => {
       this.transcriptions = response.data
       this.transcripts_loading = false
     })
@@ -226,7 +226,7 @@ export default {
     server_starting() {
       this.start_server_loading = true
       this.start_server_request_amount++
-      axios.get('http://localhost:6545/live_server_status').then((response) => {
+      axios.get(`${import.meta.env.VITE_BACKEND_URL}/live_server_status`).then((response) => {
         this.serverStatus = response.data.status === 'online'
         if (this.serverStatus) {
           clearInterval(this.server_start_intervall)
@@ -235,7 +235,7 @@ export default {
       })
       this.server_start_intervall = setInterval(() => {
         this.start_server_request_amount++
-        axios.get('http://localhost:6545/live_server_status').then((response) => {
+        axios.get(`${import.meta.env.VITE_BACKEND_URL}/live_server_status`).then((response) => {
           this.serverStatus = response.data.status === 'online'
           if (this.serverStatus) {
             clearInterval(this.server_start_intervall)
@@ -248,7 +248,7 @@ export default {
       this.status = 'transcribing'
       const interval = setInterval(() => {
         axios
-          .get(`http://localhost:6545/transcriptions/${this.transcription_in_progress}`)
+          .get(`${import.meta.env.VITE_BACKEND_URL}/transcriptions/${this.transcription_in_progress}`)
           .then((response) => {
             if (response.status !== 202) {
               this.last_transcript = response.data
