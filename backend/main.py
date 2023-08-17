@@ -150,6 +150,7 @@ async def upload_audio_file(file: UploadFile = File(...)):
     with open(os.path.join(file_path, 'audio_files', transcript_id), 'wb') as f:
         f.write(audio_bytes)
 
+    global last_request
     last_request = datetime.utcnow()
     result = json.loads(response.json())
     text = result['text']
@@ -215,6 +216,7 @@ async def delete_transcriptions(transcript_id: str):
 # route that checks if model is online
 @app.get("/server_status")
 async def health():
+    global last_request
     if last_request is None:
         return {"status": "offline"}
     else:
@@ -224,14 +226,16 @@ async def health():
             return {"status": "online"}
 
 
-@app.post("/start_server")
+@app.post("/live_server_status")
 async def start_server():
+    # Send arbitrary data to start server and check if it is online = code different from 502
     data_dict = json.dumps({"inputs": [], "options": {"task": "start_server"}})
     response = requests.post(HUGGINGFACE_API_URL, headers = headers, data = data_dict)
-    if response.status_code == 200:
-        last_request = datetime.utcnow()
+    if response.status_code != 502:
         return {"status": "ok"}
-
+    
+    global last_request
+    last_request = datetime.utcnow()
     return {"status": "error"}
 
 if __name__ == "__main__":
