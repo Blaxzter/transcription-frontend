@@ -14,8 +14,8 @@ class LangModel:
         self.model = None
         self.index = 0
         self.q = None
-        self.model_name = 'tiny'
-        # self.model_name = 'large-v2'
+        # self.model_name = 'tiny'
+        self.model_name = 'large-v2'
         self.process_queues = dict()
         self.load_lang_model()
 

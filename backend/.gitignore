@@ -3,3 +3,4 @@
 /venv
 /audio_files
 db.json
+/models/

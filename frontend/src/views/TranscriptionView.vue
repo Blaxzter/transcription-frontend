@@ -56,7 +56,7 @@
         </div>
         <div>
           <span v-for="(chunk, idx) in transcription?.chunks" :key="idx">
-            {{ chunk.text }}
+            {{ chunk.text + " " }}
           </span>
         </div>
       </div>

@@ -76,6 +76,7 @@ transcription_text = ''
 transcription_chunks = []
 transcription_file_name = ''
 
+
 class Token(BaseModel):
     access_token: str
     token_type: str
@@ -155,31 +156,53 @@ async def get_status():
 
 def start_transcription_process(transcript_id, audio_file_path):
     global transcription_in_progress
+    global transcription_text
+    global transcription_chunks
     transcription_in_progress = transcript_id
 
+
     def end_callback(end_data):
-        global transcription_in_progress
-        global transcription_text
-        global transcription_chunks
-        global transcription_file_name
-
-        # store transcript in 'transcripts' under name uuid
-        data = {
-            'id': transcript_id,
-            'text': transcription_text,
-            'chunks': transcription_chunks,
-            'file_name': transcription_file_name,
-            'transcription_name': f'{transcription_file_name} - {datetime.now().strftime("%d.%m.%Y %H:%M:%S")}',
-            'created_at': datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
-        }
-        transcripts.insert(data)
-
-        transcription_in_progress = None
+        process_queue(transcript_id)
 
     transcription_text = ''
     transcription_chunks = []
 
     lang_model.transcribe_text(audio_file_path, transcript_id, end_callback)
+
+
+def process_queue(transcript_id):
+    global transcription_in_progress
+    global transcription_text
+    global transcription_chunks
+    global transcription_file_name
+    global lang_model
+
+    for data, fished in lang_model.empty_process_queue(transcript_id):
+        if fished:
+            data = {
+                'id': transcript_id,
+                'text': transcription_text.strip() if transcription_text else '',
+                'chunks': transcription_chunks,
+                'file_name': transcription_file_name,
+                'transcription_name': f'{transcription_file_name} - {datetime.now().strftime("%d.%m.%Y %H:%M:%S")}',
+                'created_at': datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+            }
+
+            if not transcripts.contains(transcript_model.id == transcript_id):
+                # store transcript in 'transcripts' under name uuid
+                transcripts.insert(data)
+            else:
+                transcripts.update(data, transcript_model.id == transcript_id)
+
+            transcription_in_progress = None
+        else:
+            new_text = data['text'].strip() if data['text'] else ''
+            transcription_text = transcription_text + ' ' + new_text
+            transcription_chunks.append(dict(
+                start = data['start'],
+                end = data['end'],
+                text = new_text,
+            ))
 
 
 @app.post("/transcribe", dependencies = [Depends(get_current_user)])
@@ -193,6 +216,9 @@ async def upload_audio_file(file: UploadFile = File(...)):
     audio_data = base64.b64encode(audio_bytes).decode()
 
     transcript_id = str(uuid.uuid4())
+
+    global transcription_file_name
+    transcription_file_name = file.filename
 
     audio_file_path = os.path.join(file_path, 'audio_files', transcript_id)
     with open(audio_file_path, 'wb') as f:
@@ -217,29 +243,7 @@ async def get_transcription(transcript_id: str, response: Response):
     global lang_model
 
     if transcription_in_progress == transcript_id:
-        for data, fished in lang_model.empty_process_queue(transcript_id):
-            if fished:
-                if not transcripts.contains(transcript_model.id == transcript_id):
-                    # store transcript in 'transcripts' under name uuid
-                    data = {
-                        'id': transcript_id,
-                        'text': transcription_text.strip() if transcription_text else '',
-                        'chunks': transcription_chunks,
-                        'file_name': transcription_file_name,
-                        'transcription_name': f'{transcription_file_name} - {datetime.now().strftime("%d.%m.%Y %H:%M:%S")}',
-                        'created_at': datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
-                    }
-                    transcripts.insert(data)
-
-                    transcription_in_progress = None
-            else:
-                new_text = data['text'].strip() if data['text'] else ''
-                transcription_text = transcription_text + ' ' + new_text
-                transcription_chunks.append(dict(
-                    start = data['start'],
-                    end = data['end'],
-                    text = new_text,
-                ))
+        process_queue(transcript_id)
 
         response.status_code = status.HTTP_202_ACCEPTED
         return dict(text = transcription_text, chunks = transcription_chunks)
@@ -282,4 +286,5 @@ async def delete_transcriptions(transcript_id: str):
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host = '0.0.0.0', port = 6545)
