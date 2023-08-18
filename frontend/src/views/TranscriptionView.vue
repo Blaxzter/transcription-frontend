@@ -23,15 +23,21 @@
     </div>
 
     <div class="w-100">
-      <div class="component">
-        <WaveFormComponent
-          v-if="file || audio_url"
-          :file="file"
-          :url="audio_url"
-          :only_view="true"
-        />
+      <div class="component" >
+        <div v-if="load_audio">
+          Wenn du die Audio datei noch einmal Hören möchtest, musst du sie noch einmal laden.
+          <v-btn color="primary" @click="load_audio = false">Lade die Audio</v-btn>
+        </div>
         <div v-else>
-          <v-progress-linear indeterminate color="green" height="12"></v-progress-linear>
+          <WaveFormComponent
+            v-if="file || audio_url"
+            :file="file"
+            :url="audio_url"
+            :only_view="true"
+          />
+          <div v-else>
+            <v-progress-linear indeterminate color="green" height="12"></v-progress-linear>
+          </div>
         </div>
       </div>
     </div>
@@ -96,7 +102,8 @@ export default {
     user: useUserStore(),
     transcription: undefined,
     file: undefined,
-    delete_dialog: false
+    delete_dialog: false,
+    load_audio: true
   }),
   props: {
     transcription_id: {
