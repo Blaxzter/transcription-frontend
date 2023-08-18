@@ -33,7 +33,8 @@ export default {
     // status
     status: 'idle',
     upload_progress: 0,
-    last_transcript: null
+    last_transcript: null,
+    text_progress: ''
   }),
   emits: ['transcription_created'],
   props: {
@@ -49,91 +50,20 @@ export default {
       type: Boolean,
       required: false,
       default: false
+    },
+    transcription_in_progress_id: {
+      type: String,
+      required: false,
+      default: undefined
     }
   },
   mounted() {
-    this.wavesurfer = WaveSurfer.create({
-      container: '#waveform',
-      waveColor: '#2196f3',
-      progressColor: '#003a69',
-      backend: 'MediaElement',
-      hideScrollbar: true,
-      fetchParams: {
-        headers: {
-          Authorization: 'Bearer ' + this.user.get_user
-        }
-      },
-      minPxPerSec: 0
-    })
-
-    this.regions = this.wavesurfer.registerPlugin(RegionsPlugin.create())
-    // this.wavesurfer.registerPlugin(TimelinePlugin.create())
-    const hover = this.wavesurfer.registerPlugin(
-      HoverPlugin.create({
-        lineColor: '#ff0000',
-        lineWidth: 2,
-        labelBackground: '#555',
-        labelColor: '#fff',
-        labelSize: '11px'
-      })
-    )
-    hover.on('hover', (position) => {
-      this.hover_pos = position
-    })
-
-    this.wavesurfer.registerPlugin(
-      MinimapPlugin.create({
-        height: 20,
-        waveColor: '#818181',
-        progressColor: '#2c2c2c'
-        // the Minimap takes all the same options as the WaveSurfer itself
-      })
-    )
-
-    this.wavesurfer.on('load', () => {
-      console.log('load')
-      this.loading_finished = false
-    })
-    this.wavesurfer.on('ready', () => {
-      console.log('ready')
-      this.loading_finished = true
-    })
-
-    this.wavesurfer.on('decode', (duration) => {
-      console.log('decode', duration)
-      this.audio_duration = duration
-
-      this.region = this.regions.addRegion({
-        start: 0,
-        end: this.audio_duration,
-        content: `Transkribierungs Bereich`,
-        color: 'hsla(203,88%,41%, 0.2)',
-        drag: false,
-        resize: true
-      })
-    })
-
-    // add trigger for play pause
-    this.wavesurfer.on('play', () => {
-      this.is_playing = true
-    })
-    this.wavesurfer.on('pause', () => {
-      this.is_playing = false
-    })
-
-    if (this.url) {
-      this.wavesurfer.on('loading', (percentage) => {
-        console.log('loading', percentage)
-        if (percentage === 100) {
-          this.loading_intermediate = true
-        }
-        this.loading_percentage = percentage
-      })
-      this.wavesurfer.load(this.url)
-    } else if (this.file) {
-      this.loading_percentage = 100
-      this.loading_intermediate = true
-      this.wavesurfer.loadBlob(this.file)
+    console.log(this.transcription_in_progress_id)
+    if(this.transcription_in_progress_id) {
+      this.status = 'transcribing'
+      this.start_check_for_update(this.transcription_in_progress_id)
+    } else {
+      this.load_wave()
     }
   },
   unmounted() {
@@ -145,9 +75,97 @@ export default {
     },
     upload_progress_rounded() {
       return this.upload_progress
-    }
+    },
+    current_text_progress() {
+      return this.text_progress
+    },
   },
   methods: {
+    load_wave() {
+      this.wavesurfer = WaveSurfer.create({
+        container: '#waveform',
+        waveColor: '#2196f3',
+        progressColor: '#003a69',
+        backend: 'MediaElement',
+        hideScrollbar: true,
+        fetchParams: {
+          headers: {
+            Authorization: 'Bearer ' + this.user.get_user
+          }
+        },
+        minPxPerSec: 0
+      })
+
+      this.regions = this.wavesurfer.registerPlugin(RegionsPlugin.create())
+      // this.wavesurfer.registerPlugin(TimelinePlugin.create())
+      const hover = this.wavesurfer.registerPlugin(
+        HoverPlugin.create({
+          lineColor: '#ff0000',
+          lineWidth: 2,
+          labelBackground: '#555',
+          labelColor: '#fff',
+          labelSize: '11px'
+        })
+      )
+      hover.on('hover', (position) => {
+        this.hover_pos = position
+      })
+
+      this.wavesurfer.registerPlugin(
+        MinimapPlugin.create({
+          height: 20,
+          waveColor: '#818181',
+          progressColor: '#2c2c2c'
+          // the Minimap takes all the same options as the WaveSurfer itself
+        })
+      )
+
+      this.wavesurfer.on('load', () => {
+        console.log('load')
+        this.loading_finished = false
+      })
+      this.wavesurfer.on('ready', () => {
+        console.log('ready')
+        this.loading_finished = true
+      })
+
+      this.wavesurfer.on('decode', (duration) => {
+        console.log('decode', duration)
+        this.audio_duration = duration
+
+        this.region = this.regions.addRegion({
+          start: 0,
+          end: this.audio_duration,
+          content: `Transkribierungs Bereich`,
+          color: 'hsla(203,88%,41%, 0.2)',
+          drag: false,
+          resize: true
+        })
+      })
+
+      // add trigger for play pause
+      this.wavesurfer.on('play', () => {
+        this.is_playing = true
+      })
+      this.wavesurfer.on('pause', () => {
+        this.is_playing = false
+      })
+
+      if (this.url) {
+        this.wavesurfer.on('loading', (percentage) => {
+          console.log('loading', percentage)
+          if (percentage === 100) {
+            this.loading_intermediate = true
+          }
+          this.loading_percentage = percentage
+        })
+        this.wavesurfer.load(this.url)
+      } else if (this.file) {
+        this.loading_percentage = 100
+        this.loading_intermediate = true
+        this.wavesurfer.loadBlob(this.file)
+      }
+    },
     open_transcript() {
       console.log(this.last_transcript)
       this.user.set_user_file(this.file)
@@ -229,22 +247,23 @@ export default {
       // Read the audio file as an ArrayBuffer
       reader.readAsArrayBuffer(this.file)
     },
+
     start_check_for_update(transcription_id) {
+      this.status = 'transcribing'
       const interval = setInterval(() => {
         axios
           .get(`${import.meta.env.VITE_BACKEND_URL}/transcriptions/${transcription_id}`)
           .then((response) => {
-            console.log(response)
-            if (response.status === 202) {
-              console.log("Waiting for transcription to finish")
-            } else {
-              this.status = 'done'
+            if (response.status !== 202) {
               this.last_transcript = response.data
+              this.status = 'done'
               clearInterval(interval)
+            } else {
+              this.text_progress = response.data.text
+              console.log(this.text_progress)
             }
           })
-          .catch((err) => {
-            console.log(err)
+          .catch(() => {
             this.status = 'error'
             clearInterval(interval)
           })
@@ -349,6 +368,9 @@ export default {
       </v-alert>
     </div>
     <v-progress-linear :indeterminate="true" color="purple" height="12"></v-progress-linear>
+    <div>
+      {{ current_text_progress }}
+    </div>
   </div>
   <div v-show="status === 'done'">
     <div>
