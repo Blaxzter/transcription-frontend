@@ -12,7 +12,8 @@ from fastapi import FastAPI, Depends, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
-from starlette.responses import FileResponse
+from starlette import status
+from starlette.responses import FileResponse, Response
 from tinydb import Query
 from tinydb import TinyDB
 
@@ -145,6 +146,13 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
+@app.get("/status", dependencies = [Depends(get_current_user)])
+async def get_status():
+    global transcription_in_progress
+
+    return {"status": "ok", "transcription_in_progress": transcription_in_progress}
+
+
 def start_transcription_process(transcript_id, audio_file_path):
     global transcription_in_progress
     transcription_in_progress = transcript_id
@@ -154,9 +162,6 @@ def start_transcription_process(transcript_id, audio_file_path):
         global transcription_text
         global transcription_chunks
         global transcription_file_name
-
-        transcription_text = ''
-        transcription_chunks = []
 
         # store transcript in 'transcripts' under name uuid
         data = {
@@ -169,9 +174,10 @@ def start_transcription_process(transcript_id, audio_file_path):
         }
         transcripts.insert(data)
 
-        transcription_text = ''
-        transcription_chunks = []
         transcription_in_progress = None
+
+    transcription_text = ''
+    transcription_chunks = []
 
     lang_model.transcribe_text(audio_file_path, transcript_id, end_callback)
 
@@ -203,7 +209,7 @@ async def get_transcriptions():
 
 
 @app.get("/transcriptions/{transcript_id}", dependencies = [Depends(get_current_user)])
-async def get_transcription(transcript_id: str):
+async def get_transcription(transcript_id: str, response: Response):
     global transcription_in_progress
     global transcription_text
     global transcription_chunks
@@ -217,7 +223,7 @@ async def get_transcription(transcript_id: str):
                     # store transcript in 'transcripts' under name uuid
                     data = {
                         'id': transcript_id,
-                        'text': transcription_text,
+                        'text': transcription_text.strip() if transcription_text else '',
                         'chunks': transcription_chunks,
                         'file_name': transcription_file_name,
                         'transcription_name': f'{transcription_file_name} - {datetime.now().strftime("%d.%m.%Y %H:%M:%S")}',
@@ -225,18 +231,18 @@ async def get_transcription(transcript_id: str):
                     }
                     transcripts.insert(data)
 
-                    transcription_text = ''
-                    transcription_chunks = []
                     transcription_in_progress = None
             else:
-                transcription_text = transcription_text + ' ' + data['text']
+                new_text = data['text'].strip() if data['text'] else ''
+                transcription_text = transcription_text + ' ' + new_text
                 transcription_chunks.append(dict(
                     start = data['start'],
                     end = data['end'],
-                    text = data['text'],
+                    text = new_text,
                 ))
 
-        raise HTTPException(status_code = 202, detail = {'text': transcription_text, 'chunks': transcription_chunks})
+        response.status_code = status.HTTP_202_ACCEPTED
+        return dict(text = transcription_text, chunks = transcription_chunks)
 
     # check if transcript exists
     if not transcripts.contains(transcript_model.id == transcript_id):
@@ -276,6 +282,4 @@ async def delete_transcriptions(transcript_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-
-    host = os.getenv('HOST', 'localhost')
     uvicorn.run(app, host = '0.0.0.0', port = 6545)

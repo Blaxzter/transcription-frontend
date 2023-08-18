@@ -28,7 +28,7 @@ def transcribe(
         no_speech_threshold: Optional[float] = 0.6,
         condition_on_previous_text: bool = True,
         process_queue = None,
-        end_call_back = None,
+        end_callback = None,
         job_id: uuid = None,
         **decode_options,
 ):
@@ -263,7 +263,7 @@ def transcribe(
 
     process_queue.put(dict(channel = 'message', job_id = job_id, data = 'end'))
     end_data = dict(text = tokenizer.decode(all_tokens[len(initial_prompt):]), segments = all_segments, language = language)
-    if end_call_back:
-        end_call_back(end_data)
+    if end_callback:
+        end_callback(end_data)
 
     return end_data
