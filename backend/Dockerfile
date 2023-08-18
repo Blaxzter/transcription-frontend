@@ -13,6 +13,8 @@ RUN pip install -r requirements.txt
 # Copy the rest of app
 COPY .env .env
 COPY main.py main.py
+COPY LangModel.py LangModel.py
+COPY transcribe.py transcribe.py 
 
 # touch db.json
 RUN touch db.json
