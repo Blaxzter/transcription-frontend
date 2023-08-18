@@ -29,6 +29,8 @@ origins = [
     "https://transcribe.fabraham.dev:6544",
     "https://transcribe-api.fabraham.dev",
     "https://transcribe-api.fabraham.dev:6544",
+    "http://lehmann-nvidia.3oqsistwe8abycyz.myfritz.net",
+    "http://lehmann-nvidia.3oqsistwe8abycyz.myfritz.net:6544",
 ]
 app.add_middleware(
     CORSMiddleware,
