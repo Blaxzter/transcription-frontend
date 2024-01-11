@@ -9,11 +9,13 @@ import axios from 'axios'
 
 import audioBufferToWav from 'audiobuffer-to-wav'
 import router from '@/router'
+import { Status, useTranscriptionStatusStore } from '@/stores/transcription_status'
 
 export default {
   name: 'WaveFormComponent',
   data: () => ({
     user: useUserStore(),
+    statusStore: useTranscriptionStatusStore(),
 
     // wavesurfer stuff
     wavesurfer: null,
@@ -31,12 +33,14 @@ export default {
     loading_intermediate: false,
 
     // status
-    status: 'idle',
-    upload_progress: 0,
     last_transcript: null,
-    text_progress: ''
+    text_progress: '',
+    upload_progress: 0,
+
+    // original region
+    original_region_start: 0,
+    original_region_end: 0
   }),
-  emits: ['transcription_created'],
   props: {
     file: {
       type: Object,
@@ -58,9 +62,10 @@ export default {
     }
   },
   mounted() {
+    this.statusStore.set_status('idle')
     console.log(this.transcription_in_progress_id)
-    if(this.transcription_in_progress_id) {
-      this.status = 'transcribing'
+    if (this.transcription_in_progress_id) {
+      this.statusStore.set_status('transcribing')
       this.start_check_for_update(this.transcription_in_progress_id)
     } else {
       this.load_wave()
@@ -79,6 +84,9 @@ export default {
     current_text_progress() {
       return this.text_progress
     },
+    status() {
+      return this.statusStore.get_transcription_status
+    }
   },
   methods: {
     load_wave() {
@@ -93,7 +101,10 @@ export default {
             Authorization: 'Bearer ' + this.user.get_user
           }
         },
-        minPxPerSec: 0
+        minPxPerSec: 0,
+        barGap: 2,
+        barWidth: 2,
+        barRadius: 3
       })
 
       this.regions = this.wavesurfer.registerPlugin(RegionsPlugin.create())
@@ -141,6 +152,8 @@ export default {
           drag: false,
           resize: true
         })
+        this.original_region_start = 0
+        this.original_region_end = this.audio_duration
       })
 
       // add trigger for play pause
@@ -177,7 +190,7 @@ export default {
       })
     },
     async uploadFile() {
-      this.status = 'cutting'
+      this.statusStore.set_status('cutting')
 
       const start = this.region.start
       const end = this.region.end
@@ -190,58 +203,63 @@ export default {
 
         // Decode the audio data
         const audioContext = new AudioContext()
-        audioContext.decodeAudioData(arrayBuffer, async (buffer) => {
-          // Extract the desired segment
-          const numberOfChannels = buffer.numberOfChannels
-          const sampleRate = buffer.sampleRate
-          const startOffset = Math.floor(start * sampleRate)
-          const endOffset = Math.floor(end * sampleRate)
-          const newBuffer = audioContext.createBuffer(
-            numberOfChannels,
-            endOffset - startOffset,
-            sampleRate
-          )
+        audioContext
+          .decodeAudioData(arrayBuffer, async (buffer) => {
+            // Extract the desired segment
+            const numberOfChannels = buffer.numberOfChannels
+            const sampleRate = buffer.sampleRate
+            const startOffset = Math.floor(start * sampleRate)
+            const endOffset = Math.floor(end * sampleRate)
+            const newBuffer = audioContext.createBuffer(
+              numberOfChannels,
+              endOffset - startOffset,
+              sampleRate
+            )
 
-          for (let channel = 0; channel < numberOfChannels; channel++) {
-            const oldChannelData = buffer.getChannelData(channel)
-            const newChannelData = newBuffer.getChannelData(channel)
-            for (let i = startOffset; i < endOffset; i++) {
-              newChannelData[i - startOffset] = oldChannelData[i]
-            }
-          }
-
-          // Encode the segment to WAV format
-          // This function needs to be defined to convert the audio buffer to WAV or other desired format
-          const wavArrayBuffer = audioBufferToWav(newBuffer)
-          const wavBlob = new Blob([wavArrayBuffer], { type: 'audio/wav' })
-          // Create FormData and append the audio segment
-          const formData = new FormData()
-          formData.append('file', wavBlob, `${this.file.name}`)
-
-          // Now you can upload the formData using fetch or any other AJAX method
-          this.status = 'uploading'
-
-          await axios
-            .post(`${import.meta.env.VITE_BACKEND_URL}/transcribe`, formData, {
-              headers: {
-                'content-type': 'multipart/form-data', // do not forget this
-                Authorization: 'Bearer ' + this.user.get_user
-              },
-              onUploadProgress: (progressEvent) => {
-                this.upload_progress = Math.round(
-                  (progressEvent.loaded / progressEvent.total) * 100
-                )
+            for (let channel = 0; channel < numberOfChannels; channel++) {
+              const oldChannelData = buffer.getChannelData(channel)
+              const newChannelData = newBuffer.getChannelData(channel)
+              for (let i = startOffset; i < endOffset; i++) {
+                newChannelData[i - startOffset] = oldChannelData[i]
               }
-            })
-            .then((response) => {
-              this.status = 'transcribing'
-              this.start_check_for_update(response.data.transcription_id)
-            })
-            .catch((err) => {
-              this.status = 'error'
-              console.log(err)
-            })
-        })
+            }
+
+            // Encode the segment to WAV format
+            // This function needs to be defined to convert the audio buffer to WAV or other desired format
+            const wavArrayBuffer = audioBufferToWav(newBuffer)
+            const wavBlob = new Blob([wavArrayBuffer], { type: 'audio/wav' })
+            // Create FormData and append the audio segment
+            const formData = new FormData()
+            formData.append('file', wavBlob, `${this.file.name}`)
+
+            // Now you can upload the formData using fetch or any other AJAX method
+            this.statusStore.set_status(Status.UPLOADING)
+
+            await axios
+              .post(`${import.meta.env.VITE_BACKEND_URL}/transcribe`, formData, {
+                headers: {
+                  'content-type': 'multipart/form-data', // do not forget this
+                  Authorization: 'Bearer ' + this.user.get_user
+                },
+                onUploadProgress: (progressEvent) => {
+                  this.upload_progress = Math.round(
+                    (progressEvent.loaded / progressEvent.total) * 100
+                  )
+                }
+              })
+              .then((response) => {
+                this.statusStore.set_status(Status.TRANSCRIBING)
+                this.start_check_for_update(response.data.transcription_id)
+              })
+              .catch((err) => {
+                this.statusStore.set_status(Status.TRANSCRIBED)
+                console.log(err)
+              })
+          })
+          .catch((err) => {
+            console.log(err)
+            this.statusStore.set_status(Status.ERROR)
+          })
       }
 
       // Read the audio file as an ArrayBuffer
@@ -249,14 +267,14 @@ export default {
     },
 
     start_check_for_update(transcription_id) {
-      this.status = 'transcribing'
+      this.statusStore.set_status(Status.TRANSCRIBING)
       const interval = setInterval(() => {
         axios
           .get(`${import.meta.env.VITE_BACKEND_URL}/transcriptions/${transcription_id}`)
           .then((response) => {
             if (response.status !== 202) {
               this.last_transcript = response.data
-              this.status = 'done'
+              this.statusStore.set_status('done')
               clearInterval(interval)
             } else {
               this.text_progress = response.data.text
@@ -264,17 +282,17 @@ export default {
             }
           })
           .catch(() => {
-            this.status = 'error'
+            this.statusStore.set_status('error')
             clearInterval(interval)
           })
       }, 1000)
     },
-    onWheel: function (e) {
-      let delta = -Math.max(-1, Math.min(1, e.deltaY))
-      this.zoom_level = this.zoom_level + delta
-      this.zoom_level = Math.max(0, Math.min(200, this.zoom_level))
-      this.wavesurfer.zoom(this.zoom_level)
-    },
+    // onWheel: function (e) {
+    //   let delta = -Math.max(-0.1, Math.min(0.1, e.deltaY))
+    //   this.zoom_level = this.zoom_level + delta
+    //   this.zoom_level = Math.max(0, Math.min(200, this.zoom_level))
+    //   this.wavesurfer.zoom(this.zoom_level)
+    // },
     playPause() {
       console.log('playPause')
       this.wavesurfer.playPause()
@@ -293,7 +311,7 @@ export default {
           Transkriebierung wird die Datei geschnitten und hochgeladen.
         </div>
       </div>
-      <div id="waveform" @wheel="onWheel" />
+      <div id="waveform" />
       <div v-if="wavesurfer" class="d-flex">
         <v-btn
           color="primary"
@@ -348,6 +366,13 @@ export default {
         Die Audio Datei wird grade geschnitten.
       </v-alert>
     </div>
+    <v-progress-linear
+      v-if="loading_intermediate"
+      :indeterminate="true"
+      color="purple"
+
+      height="12"
+    ></v-progress-linear>
   </div>
   <div v-show="status === 'uploading'">
     <div>
