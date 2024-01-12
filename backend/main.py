@@ -237,16 +237,16 @@ async def upload_audio_file(
     end = Form(),
 ):
     # Rest of the code...
-    audio_bytes = await files[0].read()
+    audio_bytes = await files.read()
 
     if transcription_in_progress:
         raise HTTPException(status_code = 400, detail = "Transcription already in progress")
 
     transcript_id = str(uuid.uuid4())
 
-    file_type = files[0].filename.split('.')[-1]
+    file_type = files.filename.split('.')[-1]
     global transcription_file_name
-    transcription_file_name = files[0].filename
+    transcription_file_name = files.filename
 
     audio_file_path = os.path.join(file_path, 'audio_files', transcript_id + '.' + file_type)
     with open(audio_file_path, 'wb') as f:
