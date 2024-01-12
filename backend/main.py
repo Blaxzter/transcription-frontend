@@ -71,6 +71,9 @@ headers = {
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl = "token")
 last_request: datetime.date = None
 
+import torch
+print(f"cuda: {torch.cuda.torch.cuda.is_available()}" )
+
 lang_model = LangModel()
 
 transcription_in_progress = False

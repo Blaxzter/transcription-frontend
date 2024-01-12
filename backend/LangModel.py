@@ -7,6 +7,7 @@ import whisper
 from tinydb import Query, where
 
 from transcribe import transcribe
+import torch
 
 
 class LangModel:
@@ -23,6 +24,7 @@ class LangModel:
         model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models')
         print(f"Load Model: {self.model_name} into {model_path}")
         self.model = whisper.load_model(self.model_name, download_root = model_path)
+        print(f"finished: {self.model.device} cuda: {torch.cuda.torch.cuda.is_available()}" )
         # self.model = whisper.load_model("tiny")
         print("finished")
 
