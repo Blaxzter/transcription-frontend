@@ -1,7 +1,5 @@
 import os
-import os
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -231,7 +229,7 @@ def cut_audio(input_file, start_time, duration, output_file):
 
 @app.post("/transcribe", dependencies = [Depends(get_current_user)])
 async def upload_audio_file(
-    files: list[UploadFile] = File(description="Multiple files as UploadFile"),
+    files = File(description="Multiple files as UploadFile"),
     start = Form(),
     end = Form(),
 ):
