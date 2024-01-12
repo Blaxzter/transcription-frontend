@@ -140,6 +140,9 @@ export default {
       })
 
       this.wavesurfer.on('decode', (duration) => {
+        if (this.region !== null)
+          return
+
         console.log('decode', duration)
         this.audio_duration = duration
 
