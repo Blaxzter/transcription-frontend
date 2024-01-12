@@ -291,7 +291,7 @@ async def get_audio_file(transcript_id: str):
     transcript_data = transcripts.get(transcript_model.id == transcript_id)
 
     # get file with Path(file_path, 'audio_files', transcript_id . * )
-    possible_files = list(Path(os.path.join(file_path, 'audio_files')).glob(f'{transcript_id}.*'))
+    possible_files = list(Path(os.path.join(file_path, 'audio_files')).glob(f'{transcript_id}*'))
 
     # check if audio file exists
     if len(possible_files) == 0:
