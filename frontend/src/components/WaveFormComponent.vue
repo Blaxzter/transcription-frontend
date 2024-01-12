@@ -7,7 +7,6 @@ import HoverPlugin from 'wavesurfer.js/plugins/hover'
 import MinimapPlugin from 'wavesurfer.js/plugins/minimap'
 import axios from 'axios'
 
-import audioBufferToWav from 'audiobuffer-to-wav'
 import router from '@/router'
 import { Status, useTranscriptionStatusStore } from '@/stores/transcription_status'
 
@@ -190,80 +189,33 @@ export default {
       })
     },
     async uploadFile() {
-      this.statusStore.set_status('cutting')
+      const formData = new FormData()
+      formData.append('files', this.file)
 
-      const start = this.region.start
-      const end = this.region.end
+      formData.append('start', `${this.region.start}`)
+      formData.append('end', `${this.region.end}`)
 
-      // Read the file as a blob
-      const reader = new FileReader()
-      reader.onload = (event) => {
-        // Convert blob to ArrayBuffer
-        const arrayBuffer = event.target.result
+      // get file data and upload it
+      this.statusStore.set_status(Status.UPLOADING)
 
-        // Decode the audio data
-        const audioContext = new AudioContext()
-        audioContext
-          .decodeAudioData(arrayBuffer, async (buffer) => {
-            // Extract the desired segment
-            const numberOfChannels = buffer.numberOfChannels
-            const sampleRate = buffer.sampleRate
-            const startOffset = Math.floor(start * sampleRate)
-            const endOffset = Math.floor(end * sampleRate)
-            const newBuffer = audioContext.createBuffer(
-              numberOfChannels,
-              endOffset - startOffset,
-              sampleRate
-            )
-
-            for (let channel = 0; channel < numberOfChannels; channel++) {
-              const oldChannelData = buffer.getChannelData(channel)
-              const newChannelData = newBuffer.getChannelData(channel)
-              for (let i = startOffset; i < endOffset; i++) {
-                newChannelData[i - startOffset] = oldChannelData[i]
-              }
-            }
-
-            // Encode the segment to WAV format
-            // This function needs to be defined to convert the audio buffer to WAV or other desired format
-            const wavArrayBuffer = audioBufferToWav(newBuffer)
-            const wavBlob = new Blob([wavArrayBuffer], { type: 'audio/wav' })
-            // Create FormData and append the audio segment
-            const formData = new FormData()
-            formData.append('file', wavBlob, `${this.file.name}`)
-
-            // Now you can upload the formData using fetch or any other AJAX method
-            this.statusStore.set_status(Status.UPLOADING)
-
-            await axios
-              .post(`${import.meta.env.VITE_BACKEND_URL}/transcribe`, formData, {
-                headers: {
-                  'content-type': 'multipart/form-data', // do not forget this
-                  Authorization: 'Bearer ' + this.user.get_user
-                },
-                onUploadProgress: (progressEvent) => {
-                  this.upload_progress = Math.round(
-                    (progressEvent.loaded / progressEvent.total) * 100
-                  )
-                }
-              })
-              .then((response) => {
-                this.statusStore.set_status(Status.TRANSCRIBING)
-                this.start_check_for_update(response.data.transcription_id)
-              })
-              .catch((err) => {
-                this.statusStore.set_status(Status.TRANSCRIBED)
-                console.log(err)
-              })
-          })
-          .catch((err) => {
-            console.log(err)
-            this.statusStore.set_status(Status.ERROR)
-          })
-      }
-
-      // Read the audio file as an ArrayBuffer
-      reader.readAsArrayBuffer(this.file)
+      await axios
+        .post(`${import.meta.env.VITE_BACKEND_URL}/transcribe`, formData, {
+          headers: {
+            'content-type': 'multipart/form-data', // do not forget this
+            Authorization: 'Bearer ' + this.user.get_user
+          },
+          onUploadProgress: (progressEvent) => {
+            this.upload_progress = Math.round((progressEvent.loaded / progressEvent.total) * 100)
+          }
+        })
+        .then((response) => {
+          this.statusStore.set_status(Status.TRANSCRIBING)
+          this.start_check_for_update(response.data.transcription_id)
+        })
+        .catch((err) => {
+          this.statusStore.set_status(Status.ERROR)
+          console.log(err)
+        })
     },
 
     start_check_for_update(transcription_id) {
@@ -335,6 +287,7 @@ export default {
           </span>
         </v-alert>
       </div>
+
       <div class="mt-5">
         <v-progress-linear
           v-if="loading_intermediate"
@@ -359,20 +312,6 @@ export default {
     >
       Starte Transcribierung
     </v-btn>
-  </div>
-  <div v-show="status === 'cutting'">
-    <div>
-      <v-alert type="info" border="start" class="mb-5" icon="mdi-scissors-cutting">
-        Die Audio Datei wird grade geschnitten.
-      </v-alert>
-    </div>
-    <v-progress-linear
-      v-if="loading_intermediate"
-      :indeterminate="true"
-      color="purple"
-
-      height="12"
-    ></v-progress-linear>
   </div>
   <div v-show="status === 'uploading'">
     <div>
