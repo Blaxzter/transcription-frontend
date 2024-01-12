@@ -8,9 +8,6 @@ dependencies:
   '@mdi/font':
     specifier: ^7.2.96
     version: 7.2.96
-  audiobuffer-to-wav:
-    specifier: ^1.0.0
-    version: 1.0.0
   axios:
     specifier: ^1.4.0
     version: 1.4.0
@@ -540,10 +537,6 @@ packages:
 
   /asynckit@0.4.0:
     resolution: {integrity: sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==}
-    dev: false
-
-  /audiobuffer-to-wav@1.0.0:
-    resolution: {integrity: sha512-CAoir4NRrAzAgYo20tEMiKZR84coE8bq/L+H2kwAaULVY4+0xySsEVtNT5raqpzmH6y0pqzY6EmoViLd9W8F/w==}
     dev: false
 
   /axios@1.4.0:

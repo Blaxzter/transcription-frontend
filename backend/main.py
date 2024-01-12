@@ -1,14 +1,15 @@
-import base64
+import os
 import os
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from threading import Thread
+from pathlib import Path
 from typing import Optional
 
 import bcrypt
 import jwt
 from dotenv import load_dotenv
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, Form, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
@@ -210,24 +211,50 @@ def process_queue(transcript_id):
             ))
 
 
+# @dataclass
+# class TranscribeRequest:
+
+import subprocess
+
+def cut_audio(input_file, start_time, duration, output_file):
+
+    path_path = Path(output_file)
+    # change to append cut_ on filename
+    new_output_file = path_path.parent / f'cut_{path_path.name}'
+
+    # Command to cut the audio
+    cmd_cut = f'ffmpeg -i "{input_file}" -ss {start_time} -to {duration} -acodec copy "{new_output_file}"'
+    subprocess.run(cmd_cut, shell=True)
+
+    # remove old file
+    os.remove(input_file)
+    # rename new file
+    os.rename(new_output_file, output_file)
+
+
 @app.post("/transcribe", dependencies = [Depends(get_current_user)])
-async def upload_audio_file(file: UploadFile = File(...)):
+async def upload_audio_file(
+    files: list[UploadFile] = File(description="Multiple files as UploadFile"),
+    start = Form(),
+    end = Form(),
+):
     # Rest of the code...
-    audio_bytes = await file.read()
+    audio_bytes = await files[0].read()
 
     if transcription_in_progress:
         raise HTTPException(status_code = 400, detail = "Transcription already in progress")
 
-    audio_data = base64.b64encode(audio_bytes).decode()
-
     transcript_id = str(uuid.uuid4())
 
+    file_type = files[0].filename.split('.')[-1]
     global transcription_file_name
-    transcription_file_name = file.filename
+    transcription_file_name = files[0].filename
 
-    audio_file_path = os.path.join(file_path, 'audio_files', transcript_id)
+    audio_file_path = os.path.join(file_path, 'audio_files', transcript_id + '.' + file_type)
     with open(audio_file_path, 'wb') as f:
         f.write(audio_bytes)
+
+    cut_audio(audio_file_path, start, end, audio_file_path)
 
     start_transcription_process(transcript_id, audio_file_path)
 
@@ -266,11 +293,16 @@ async def get_audio_file(transcript_id: str):
     if not transcripts.contains(transcript_model.id == transcript_id):
         raise HTTPException(status_code = 404, detail = "Transcription not found")
 
+    transcript_data = transcripts.get(transcript_model.id == transcript_id)
+
+    # get file with Path(file_path, 'audio_files', transcript_id . * )
+    possible_files = list(Path(os.path.join(file_path, 'audio_files')).glob(f'{transcript_id}.*'))
+
     # check if audio file exists
-    if not os.path.exists(os.path.join(file_path, 'audio_files', transcript_id)):
+    if len(possible_files) == 0:
         raise HTTPException(status_code = 404, detail = "Audio file not found")
 
-    return FileResponse(os.path.join(file_path, 'audio_files', transcript_id))
+    return FileResponse(possible_files[0], media_type = "audio/mpeg", filename = transcript_data['file_name'])
 
 
 # delete transcription
