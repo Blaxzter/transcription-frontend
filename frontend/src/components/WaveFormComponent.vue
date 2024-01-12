@@ -173,6 +173,14 @@ export default {
         })
         this.wavesurfer.load(this.url)
       } else if (this.file) {
+        console.log(
+          'file',
+          this.file,
+          this.file.type,
+          this.file.name,
+          this.file.size,
+          this.file.lastModified
+        )
         this.loading_percentage = 100
         this.loading_intermediate = true
         this.wavesurfer.loadBlob(this.file)
