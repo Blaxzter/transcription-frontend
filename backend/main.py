@@ -307,8 +307,11 @@ async def delete_transcriptions(transcript_id: str):
     if not transcripts.contains(transcript_model.id == transcript_id):
         raise HTTPException(status_code = 404, detail = "Transcription not found")
 
+    possible_files = list(Path(os.path.join(file_path, 'audio_files')).glob(f'{transcript_id}*'))
+
+
     # delete audio file from 'audio_files'
-    os.remove(os.path.join(file_path, 'audio_files', transcript_id))
+    os.remove(possible_files[0])
 
     # delete transcript
     transcripts.remove(transcript_model.id == transcript_id)
