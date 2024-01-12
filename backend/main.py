@@ -294,7 +294,7 @@ async def get_audio_file(transcript_id: str):
     transcript_data = transcripts.get(transcript_model.id == transcript_id)
 
     # get file with Path(file_path, 'audio_files', transcript_id . * )
-    possible_files = list(Path(os.path.join(file_path, 'audio_files')).glob(f'{transcript_id}.*'))
+    possible_files = list(Path(os.path.join(file_path, 'audio_files')).glob(f'{transcript_id}*'))
 
     # check if audio file exists
     if len(possible_files) == 0:
@@ -310,8 +310,11 @@ async def delete_transcriptions(transcript_id: str):
     if not transcripts.contains(transcript_model.id == transcript_id):
         raise HTTPException(status_code = 404, detail = "Transcription not found")
 
+    possible_files = list(Path(os.path.join(file_path, 'audio_files')).glob(f'{transcript_id}*'))
+
+
     # delete audio file from 'audio_files'
-    os.remove(os.path.join(file_path, 'audio_files', transcript_id))
+    os.remove(possible_files[0])
 
     # delete transcript
     transcripts.remove(transcript_model.id == transcript_id)
