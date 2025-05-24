@@ -140,8 +140,7 @@ export default {
       })
 
       this.wavesurfer.on('decode', (duration) => {
-        if (this.region !== null)
-          return
+        if (this.region !== null) return
 
         console.log('decode', duration)
         this.audio_duration = duration
@@ -235,13 +234,15 @@ export default {
         axios
           .get(`${import.meta.env.VITE_BACKEND_URL}/transcriptions/${transcription_id}`)
           .then((response) => {
-            if (response.status !== 202) {
+            // Check if transcription is completed based on response data
+            if (response.data.status === 'completed' || response.data.completed === true) {
               this.last_transcript = response.data
               this.statusStore.set_status('done')
               clearInterval(interval)
             } else {
-              this.text_progress = response.data.text
-              console.log(this.text_progress)
+              // Still in progress, update the progress text
+              this.text_progress = response.data.text || ''
+              console.log('Transcription progress:', this.text_progress)
             }
           })
           .catch(() => {
@@ -343,7 +344,7 @@ export default {
       </v-alert>
     </div>
     <v-progress-linear :indeterminate="true" color="purple" height="12"></v-progress-linear>
-    <div>
+    <div class="mt-5">
       {{ current_text_progress }}
     </div>
   </div>
@@ -395,7 +396,7 @@ export default {
 
 #waveform ::part(region-content) {
   position: absolute;
-  //content: 'Transcribierungs Bereich';
+  /* content: 'Transcribierungs Bereich'; */
   margin-top: -24px !important;
 }
 </style>

@@ -1,6 +1,6 @@
 <script>
-import TranscriptionCard from "@/components/TranscriptionCard.vue";
-import {useTranscriptionsStore} from "@/stores/transcriptions";
+import TranscriptionCard from '@/components/TranscriptionCard.vue'
+import { useTranscriptionsStore } from '@/stores/transcriptions'
 
 export default {
   name: 'TranscriptionCardList',
@@ -9,7 +9,7 @@ export default {
   },
   data: () => ({
     transcription_store: useTranscriptionsStore(),
-    transcripts_loading: true,
+    transcripts_loading: true
   }),
   mounted() {
     // get previous transcription_store
@@ -21,11 +21,8 @@ export default {
     transcriptions() {
       return this.transcription_store.get_transcriptions
     }
-  },
-  methods: {
   }
 }
-
 </script>
 
 <template>
@@ -68,7 +65,7 @@ export default {
 .grid-container {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
-//grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  //grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   grid-gap: 1em;
   padding: 1em;
 }

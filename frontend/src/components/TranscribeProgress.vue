@@ -1,9 +1,11 @@
 <script setup>
+import { computed, onMounted, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import WaveFormComponent from '@/components/WaveFormComponent.vue'
 import { Status, useTranscriptionStatusStore } from '@/stores/transcription_status'
-import { computed, onMounted, ref } from 'vue'
 
 const transcription_status = useTranscriptionStatusStore()
+const { transcription_in_progress_id } = storeToRefs(transcription_status)
 const files_model = ref([])
 
 const selected_file = computed(() => {
@@ -15,8 +17,8 @@ const current_transcription_status = computed(() => {
   return transcription_status.get_transcription_status
 })
 
-onMounted(() => {
-  transcription_status.load_transcript_in_progress()
+onMounted(async () => {
+  await transcription_status.load_transcript_in_progress()
 })
 </script>
 
@@ -30,7 +32,15 @@ onMounted(() => {
         </div>
       </div>
     </div>
-    <div v-if="files_model.length === 0">
+    <div
+      v-else-if="
+        current_transcription_status === Status.TRANSCRIBING && transcription_in_progress_id
+      "
+    >
+      <h2 class="mb-5">Transkription in Bearbeitung</h2>
+      <WaveFormComponent :transcription_in_progress_id="transcription_in_progress_id" />
+    </div>
+    <div v-else-if="files_model.length === 0">
       <h2 class="mb-5">Lade hier neue Audio Datei hoch.</h2>
 
       <v-alert type="info" border="start" class="text-body-1 mb-5">
@@ -43,7 +53,7 @@ onMounted(() => {
         v-model="files_model"
         show-size
         label="Lade eine Datei Hoch"
-        accept="audio/*"
+        accept=".mp3"
       ></v-file-input>
     </div>
     <div v-else>
