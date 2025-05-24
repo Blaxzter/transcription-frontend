@@ -16,9 +16,11 @@ const Status = {
 const useTranscriptionStatusStore = defineStore('transcription_status', () => {
   const transcription_status = ref(Status.LOADING)
   const upload_progress = ref(0)
+  const transcription_in_progress_id = ref(null)
 
   // status
   const get_transcription_status = computed(() => transcription_status.value)
+  const get_transcription_in_progress_id = computed(() => transcription_in_progress_id.value)
 
   const set_status = (status) => {
     transcription_status.value = status
@@ -34,14 +36,20 @@ const useTranscriptionStatusStore = defineStore('transcription_status', () => {
     return axios.get(`${import.meta.env.VITE_BACKEND_URL}/status`).then((response) => {
       if (response.data['transcription_in_progress'] === false) {
         transcription_status.value = Status.WAITING_ON_USER_INPUT
+        transcription_in_progress_id.value = null
       } else {
         transcription_status.value = Status.TRANSCRIBING
+        if (response.data.transcription_in_progress) {
+          transcription_in_progress_id.value = response.data.transcription_in_progress
+        }
       }
     })
   }
 
   return {
+    transcription_in_progress_id,
     get_transcription_status,
+    get_transcription_in_progress_id,
     set_status,
     load_transcript_in_progress,
 

@@ -50,11 +50,12 @@ axios.interceptors.response.use(
   align-items: center;
   z-index: -1000;
   position: fixed;
-  height: 100vh;
-  width: 100vw;
-  filter: blur(2px) opacity(0.9);
-  background: url('https://source.unsplash.com/random?orientation=landscape&collections=2281806')
-    no-repeat center center;
+  top: -4px;
+  left: -4px;
+  height: 101vh;
+  width: 101vw;
+  filter: blur(4px) opacity(0.9);
+  background: url('https://picsum.photos/1920/1080?random') no-repeat center center;
   background-size: cover;
 }
 </style>

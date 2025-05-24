@@ -18,8 +18,15 @@ export const useUserStore = defineStore('user', () => {
   }
 
   function auto_login() {
-    const token = JSON.parse(localStorage.getItem('access_token'))
-    user.value = token
+    const token = localStorage.getItem('access_token')
+    if (token) {
+      try {
+        user.value = JSON.parse(token)
+      } catch (error) {
+        console.error('Error parsing token:', error)
+        localStorage.removeItem('access_token')
+      }
+    }
     return !!token
   }
 
