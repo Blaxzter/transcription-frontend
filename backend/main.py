@@ -30,6 +30,8 @@ origins = [
     "https://transcribe-api.fabraham.dev:6544",
     "http://lehmann-nvidia.3oqsistwe8abycyz.myfritz.net",
     "http://lehmann-nvidia.3oqsistwe8abycyz.myfritz.net:6544",
+    "http://3oqsistwe8abycyz.myfritz.net",
+    "http://3oqsistwe8abycyz.myfritz.net:6544",
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -336,6 +338,26 @@ async def delete_transcriptions(transcript_id: str):
     transcripts.remove(transcript_model.id == transcript_id)
 
     return {"status": "ok"}
+
+
+@app.post("/stop-transcription", dependencies=[Depends(get_current_user)])
+async def stop_transcription():
+    global transcription_in_progress
+    global lang_model
+
+    if not transcription_in_progress:
+        raise HTTPException(status_code=400, detail="No transcription in progress")
+
+    transcript_id = transcription_in_progress
+    # Stop the transcription process
+    lang_model.stop_transcription(transcript_id)
+
+    # Update the transcription status
+    if transcripts.contains(transcript_model.id == transcript_id):
+        transcripts.update({"completed": True}, transcript_model.id == transcript_id)
+
+    transcription_in_progress = False
+    return {"status": "stopped", "transcription_id": transcript_id}
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ import axios from 'axios'
 
 import router from '@/router'
 import { Status, useTranscriptionStatusStore } from '@/stores/transcription_status'
+import { toast } from 'vue3-toastify'
 
 export default {
   name: 'WaveFormComponent',
@@ -251,6 +252,19 @@ export default {
           })
       }, 1000)
     },
+    stopTranscription() {
+      axios
+        .post(`${import.meta.env.VITE_BACKEND_URL}/stop-transcription`)
+        .then((response) => {
+          console.log('Transcription stopped:', response.data)
+          toast.info('Transcription process has been stopped.')
+          this.statusStore.set_status('idle')
+        })
+        .catch((error) => {
+          console.error('Error stopping transcription:', error)
+          toast.error('Failed to stop the transcription process.')
+        })
+    },
     // onWheel: function (e) {
     //   let delta = -Math.max(-0.1, Math.min(0.1, e.deltaY))
     //   this.zoom_level = this.zoom_level + delta
@@ -347,6 +361,15 @@ export default {
     <div class="mt-5">
       {{ current_text_progress }}
     </div>
+    <v-btn
+      class="mt-5 w-100"
+      color="error"
+      variant="tonal"
+      prepend-icon="mdi-stop"
+      @click="stopTranscription"
+    >
+      Transkription stoppen
+    </v-btn>
   </div>
   <div v-show="status === 'done'">
     <div>

@@ -46,12 +46,26 @@ const useTranscriptionStatusStore = defineStore('transcription_status', () => {
     })
   }
 
+  function stop_transcription() {
+    return axios
+      .post(`${import.meta.env.VITE_BACKEND_URL}/stop-transcription`)
+      .then(() => {
+        transcription_status.value = Status.WAITING_ON_USER_INPUT
+        transcription_in_progress_id.value = null
+        return true
+      })
+      .catch(() => {
+        return false
+      })
+  }
+
   return {
     transcription_in_progress_id,
     get_transcription_status,
     get_transcription_in_progress_id,
     set_status,
     load_transcript_in_progress,
+    stop_transcription,
 
     get_upload_progress,
     set_upload_progress
