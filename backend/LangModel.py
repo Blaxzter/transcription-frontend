@@ -14,14 +14,18 @@ class LangModel:
         self.model = None
         self.index = 0
         self.q = None
-        self.model_name = "tiny"
+        # Use environment variable for model name, fallback to tiny
+        self.model_name = os.getenv("WHISPER_MODEL_NAME", "tiny")
         # self.model_name = 'large-v2'
         self.process_queues = dict()
         self.active_threads = dict()
         self.load_lang_model()
 
     def load_lang_model(self):
-        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+        # Use environment variable for model directory, fallback to local models dir
+        model_path = os.getenv("WHISPER_MODEL_DIR") or os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "models"
+        )
         print(f"Load Model: {self.model_name} into {model_path}")
         self.model = whisper.load_model(self.model_name, download_root=model_path)
         # self.model = whisper.load_model("tiny")
