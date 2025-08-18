@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import traceback
 import uuid
+import logging
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 from pathlib import Path
@@ -38,6 +39,18 @@ from tinydb import TinyDB
 from LangModel import LangModel
 
 load_dotenv()
+
+# ----------------------------
+# Logging Configuration
+# ----------------------------
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+    ],
+)
+logger = logging.getLogger(__name__)
 
 # ----------------------------
 # Wowza Webhook Config
@@ -179,13 +192,16 @@ class TokenData(BaseModel):
 class WowzaWebhook(BaseModel):
     # Wowza sometimes uses `event`, sometimes `event_type` depending on product/era
     event_type: Optional[str] = Field(
-        None, description="e.g., video.updated, video.ready"
+        None, description="e.g., video.updated, video.ready, uploading"
     )
     event: Optional[str] = None
     event_id: Optional[str] = None
-    event_time: Optional[str] = None
+    event_time: Optional[float] = None  # Can be float timestamp
+    version: Optional[str] = None
+    object_type: Optional[str] = None  # e.g., "recording", "transcoder"
     object_id: Optional[str] = None
-    payload: Dict[str, Any] = Field(default_factory=dict)
+    object_data: Dict[str, Any] = Field(default_factory=dict)  # Wowza uses object_data
+    payload: Dict[str, Any] = Field(default_factory=dict)  # Fallback for older format
 
 
 # ----------------------------
@@ -193,10 +209,24 @@ class WowzaWebhook(BaseModel):
 # ----------------------------
 def require_ingest_key(req: Request):
     """Require our own shared secret header from the Worker."""
+    logger.info(
+        f"[WEBHOOK] Checking ingest key for request from {req.client.host if req.client else 'unknown'}"
+    )
+    logger.debug(f"[WEBHOOK] Request headers: {dict(req.headers)}")
+
     if not INGEST_API_KEY:
+        logger.warning("[WEBHOOK] INGEST_API_KEY not set - header protection disabled")
         return  # header protection disabled if not set
+
     key = req.headers.get("x-transcribe-api-key")
+    logger.debug(
+        f"[WEBHOOK] Received API key: {'***' + key[-4:] if key and len(key) > 4 else 'None'}"
+    )
+
     if not key or key != INGEST_API_KEY:
+        logger.error(
+            f"[WEBHOOK] Authentication failed - invalid or missing x-transcribe-api-key"
+        )
         raise HTTPException(
             status_code=401, detail="Bad or missing x-transcribe-api-key"
         )
@@ -251,26 +281,82 @@ def wowza_get_recording_download_url(recording_id: str) -> Optional[str]:
 def find_download_url(webhook: WowzaWebhook) -> Tuple[Optional[str], str]:
     """
     Try, in order:
-      1) payload.encodings[*].video_file_url (preferred)
-      2) /videos/{object_id} encodings (if API creds provided)
-      3) /recordings/{payload.id} download_url (fallback)
+      1) object_data.download_url (direct download URL from new webhook format)
+      2) payload.encodings[*].video_file_url (preferred, older format)
+      3) object_data.encodings[*].video_file_url (new format)
+      4) /recordings/{object_id} download_url (for recording objects)
+      5) /videos/{object_id} encodings (for video objects, if API creds provided)
+      6) Legacy recordings fallback (old payload.id field)
     """
-    # 1) From webhook payload
-    mp4 = pick_mp4_from_encodings(webhook.payload.get("encodings") or [])
+    logger.info("[URL_SEARCH] Starting download URL search")
+
+    # 1) From direct download URL in object_data (new recording webhook format)
+    logger.debug("[URL_SEARCH] Checking object_data for direct download_url")
+    download_url = webhook.object_data.get("download_url")
+    if download_url:
+        logger.info("[URL_SEARCH] Found direct download URL in object_data")
+        logger.debug(f"[URL_SEARCH] Download URL: {download_url}")
+        return download_url, "object_data.download_url"
+
+    # 2) From webhook payload (backwards compatibility)
+    logger.debug("[URL_SEARCH] Checking webhook payload for encodings")
+    encodings = webhook.payload.get("encodings") or []
+    logger.debug(f"[URL_SEARCH] Found {len(encodings)} encodings in payload")
+
+    mp4 = pick_mp4_from_encodings(encodings)
     if mp4:
+        logger.info("[URL_SEARCH] Found MP4 URL in webhook payload encodings")
+        logger.debug(f"[URL_SEARCH] MP4 URL: {mp4}")
         return mp4, "webhook_payload.encodings"
 
-    # 2) Query videos API if we have an object_id and creds
-    if webhook.object_id and (WV_JWT or (WSC_API_KEY and WSC_ACCESS_KEY)):
+    # 3) From webhook object_data (new format)
+    logger.debug("[URL_SEARCH] Checking webhook object_data for encodings")
+    encodings = webhook.object_data.get("encodings") or []
+    logger.debug(f"[URL_SEARCH] Found {len(encodings)} encodings in object_data")
+
+    mp4 = pick_mp4_from_encodings(encodings)
+    if mp4:
+        logger.info("[URL_SEARCH] Found MP4 URL in webhook object_data encodings")
+        logger.debug(f"[URL_SEARCH] MP4 URL: {mp4}")
+        return mp4, "webhook_object_data.encodings"
+
+    logger.debug("[URL_SEARCH] No suitable MP4 found in webhook payload or object_data")
+
+    # 3) For recording objects, use recordings API directly
+    if (
+        webhook.object_id
+        and webhook.object_type == "recording"
+        and (WV_JWT or (WSC_API_KEY and WSC_ACCESS_KEY))
+    ):
+        logger.info(
+            f"[URL_SEARCH] Trying recordings API for recording {webhook.object_id}"
+        )
+        try:
+            durl = wowza_get_recording_download_url(webhook.object_id)
+            if durl:
+                logger.info("[URL_SEARCH] Found download URL via recordings API")
+                logger.debug(f"[URL_SEARCH] Download URL: {durl}")
+                return durl, "recordings.api"
+        except Exception as e:
+            logger.warning(f"[URL_SEARCH] Failed to query recordings API: {e}")
+
+    # 4) For video objects, query videos API if we have creds
+    elif webhook.object_id and (WV_JWT or (WSC_API_KEY and WSC_ACCESS_KEY)):
+        logger.info(f"[URL_SEARCH] Querying Wowza API for video {webhook.object_id}")
         try:
             enc = wowza_get_video_encodings(webhook.object_id)
+            logger.debug(f"[URL_SEARCH] API returned {len(enc)} encodings")
             mp4 = pick_mp4_from_encodings(enc)
             if mp4:
+                logger.info("[URL_SEARCH] Found MP4 URL via Wowza videos API")
+                logger.debug(f"[URL_SEARCH] MP4 URL: {mp4}")
                 return mp4, "videos.api"
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[URL_SEARCH] Failed to query videos API: {e}")
 
-    # 3) recordings fallback
+    logger.debug("[URL_SEARCH] No suitable MP4 found via API")
+
+    # 5) Legacy recordings fallback (old payload.id field)
     rec_id = webhook.payload.get("id")
     if (
         rec_id
@@ -278,31 +364,63 @@ def find_download_url(webhook: WowzaWebhook) -> Tuple[Optional[str], str]:
         and len(rec_id) <= 16
         and (WV_JWT or (WSC_API_KEY and WSC_ACCESS_KEY))
     ):
+        logger.info(f"[URL_SEARCH] Trying recordings API for legacy recording {rec_id}")
         try:
             durl = wowza_get_recording_download_url(rec_id)
             if durl:
-                return durl, "recordings.api"
-        except Exception:
-            pass
+                logger.info("[URL_SEARCH] Found download URL via legacy recordings API")
+                logger.debug(f"[URL_SEARCH] Download URL: {durl}")
+                return durl, "recordings.api.legacy"
+        except Exception as e:
+            logger.warning(f"[URL_SEARCH] Failed to query legacy recordings API: {e}")
 
+    logger.warning("[URL_SEARCH] No download URL found via any method")
     return None, "not_found"
 
 
 def stream_download(url: str, suffix: str = ".mp4") -> str:
     """Stream a big file to a temp path; return file path."""
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as f:
-        with http_session.get(url, stream=True, timeout=HTTP_TIMEOUT) as resp:
+    logger.info(f"[DOWNLOAD] Starting download from URL")
+    logger.debug(f"[DOWNLOAD] URL: {url}")
+    logger.debug(f"[DOWNLOAD] File suffix: {suffix}")
+
+    # Create temp directory if it doesn't exist
+    temp_dir = os.path.join(os.path.dirname(__file__), "temp")
+    os.makedirs(temp_dir, exist_ok=True)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=temp_dir) as f:
+        temp_path = f.name
+        logger.debug(f"[DOWNLOAD] Temporary file: {temp_path}")
+
+        with http_session.get(
+            url, headers=headers, stream=True, timeout=HTTP_TIMEOUT
+        ) as resp:
             resp.raise_for_status()
+            logger.info(
+                f"[DOWNLOAD] HTTP {resp.status_code} - Content-Length: {resp.headers.get('content-length', 'unknown')}"
+            )
+
+            downloaded_bytes = 0
             for chunk in resp.iter_content(chunk_size=1024 * 1024):
                 if chunk:
                     f.write(chunk)
-        return f.name
+                    downloaded_bytes += len(chunk)
+
+            logger.info(f"[DOWNLOAD] Download completed - {downloaded_bytes} bytes")
+        return temp_path
 
 
 def transcribe_with_whisper(video_path: str) -> str:
     """Transcribe using openai-whisper through the LangModel."""
+    logger.info(f"[TRANSCRIBE] Starting transcription of file: {video_path}")
+
     if lang_model is None or lang_model.model is None:
+        logger.error("[TRANSCRIBE] LangModel not loaded")
         raise RuntimeError("LangModel not loaded")
+
+    logger.info(
+        f"[TRANSCRIBE] Using model: {lang_model.model_name if hasattr(lang_model, 'model_name') else 'unknown'}"
+    )
 
     force_lang = (
         WHISPER_LANGUAGE
@@ -311,52 +429,122 @@ def transcribe_with_whisper(video_path: str) -> str:
     )
     fp16_ok = WHISPER_FP16 and torch.cuda.is_available()
 
-    result = lang_model.model.transcribe(
-        audio=video_path,
-        language=force_lang,  # None → autodetect
-        verbose=False,
-        fp16=fp16_ok,
-    )
+    logger.info(f"[TRANSCRIBE] Language setting: {force_lang or 'auto-detect'}")
+    logger.info(f"[TRANSCRIBE] FP16 enabled: {fp16_ok}")
+    logger.info(f"[TRANSCRIBE] CUDA available: {torch.cuda.is_available()}")
+
+    try:
+        logger.info("[TRANSCRIBE] Starting Whisper transcription...")
+        result = lang_model.model.transcribe(
+            audio=video_path,
+            language="de",  # None → autodetect
+            verbose=False,
+            fp16=fp16_ok,
+        )
+        logger.info("[TRANSCRIBE] Whisper transcription completed")
+
+    except Exception as e:
+        logger.error(f"[TRANSCRIBE] Whisper transcription failed: {e}")
+        raise
+
     text = (result.get("text") or "").strip()
     if text:
+        logger.info(f"[TRANSCRIBE] Extracted text: {len(text)} characters")
+        logger.debug(f"[TRANSCRIBE] Text preview: {text[:200]}...")
         return text
 
     # Very rare: rebuild from segments
+    logger.warning("[TRANSCRIBE] No text found, attempting to rebuild from segments")
     segs = result.get("segments") or []
-    return "\n".join(s.get("text", "").strip() for s in segs if s.get("text"))
+    logger.info(f"[TRANSCRIBE] Found {len(segs)} segments")
+
+    rebuilt_text = "\n".join(s.get("text", "").strip() for s in segs if s.get("text"))
+    logger.info(f"[TRANSCRIBE] Rebuilt text: {len(rebuilt_text)} characters")
+
+    return rebuilt_text
 
 
 def send_email_with_attachment(
     subject: str, body_text: str, filename: str, file_bytes: bytes
 ):
+    logger.info(f"[EMAIL] Preparing to send email: {subject}")
+    logger.info(f"[EMAIL] Attachment filename: {filename}")
+    logger.info(f"[EMAIL] Attachment size: {len(file_bytes)} bytes")
+
     if not (SMTP_USERNAME and SMTP_PASSWORD and EMAIL_TO and EMAIL_FROM):
+        logger.error("[EMAIL] Missing email configuration")
+        logger.debug(
+            f"[EMAIL] Config status - USERNAME: {'set' if SMTP_USERNAME else 'missing'}, PASSWORD: {'set' if SMTP_PASSWORD else 'missing'}, TO: {'set' if EMAIL_TO else 'missing'}, FROM: {'set' if EMAIL_FROM else 'missing'}"
+        )
         raise RuntimeError(
             "Missing email config: set GMAIL_USERNAME, GMAIL_PASSWORD, TRANSCRIBE_EMAIL_TO"
         )
 
-    msg = EmailMessage()
-    msg["From"] = EMAIL_FROM
-    msg["To"] = EMAIL_TO
-    msg["Subject"] = subject
-    msg.set_content(body_text)
-    msg.add_attachment(file_bytes, maintype="text", subtype="plain", filename=filename)
+    logger.info(f"[EMAIL] Sending from {EMAIL_FROM} to {EMAIL_TO}")
+    logger.info(f"[EMAIL] Using SMTP server: {SMTP_HOST}:{SMTP_PORT}")
 
-    context = ssl.create_default_context()
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-        server.starttls(context=context)
-        server.login(SMTP_USERNAME, SMTP_PASSWORD)
-        server.send_message(msg)
+    try:
+        msg = EmailMessage()
+        msg["From"] = EMAIL_FROM
+        msg["To"] = EMAIL_TO
+        msg["Subject"] = subject
+        msg.set_content(body_text)
+        msg.add_attachment(
+            file_bytes, maintype="text", subtype="plain", filename=filename
+        )
+        logger.debug("[EMAIL] Email message constructed")
+
+        context = ssl.create_default_context()
+        logger.debug("[EMAIL] Connecting to SMTP server...")
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            logger.debug("[EMAIL] Starting TLS...")
+            server.starttls(context=context)
+
+            logger.debug("[EMAIL] Authenticating...")
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+
+            logger.debug("[EMAIL] Sending message...")
+            server.send_message(msg)
+
+        logger.info("[EMAIL] Email sent successfully")
+
+    except Exception as e:
+        logger.error(f"[EMAIL] Failed to send email: {e}")
+        raise
 
 
 def looks_ready(event_type: str, payload: Dict[str, Any]) -> bool:
     """Gate processing to 'ready/finished' events."""
+    logger.debug(f"[READY_CHECK] Checking if event is ready - type: {event_type}")
+    logger.debug(f"[READY_CHECK] Payload state: {payload.get('state', 'not_set')}")
+
+    # Recording completion events (new recording webhook format)
+    if event_type == "completed":
+        logger.info(
+            "[READY_CHECK] Event is completed (recording finished) - processing"
+        )
+        return True
+
+    # Video upload events (original logic)
     if event_type == "video.ready":
+        logger.info("[READY_CHECK] Event is video.ready - processing")
         return True
     if (
         event_type == "video.updated"
         and str(payload.get("state", "")).upper() == "FINISHED"
     ):
+        logger.info(
+            "[READY_CHECK] Event is video.updated with FINISHED state - processing"
+        )
         return True
+
+    # Recording events (livestream recordings)
+    if event_type == "uploading":
+        logger.info("[READY_CHECK] Event is uploading (recording ready) - processing")
+        return True
+
+    logger.info(f"[READY_CHECK] Event {event_type} is not ready - skipping")
     return False
 
 
@@ -431,7 +619,8 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 def health():
     model_name = lang_model.model_name if lang_model else "not_loaded"
     model_loaded = lang_model is not None and lang_model.model is not None
-    return {
+
+    health_info = {
         "status": "ok",
         "model": model_name,
         "model_loaded": model_loaded,
@@ -440,59 +629,112 @@ def health():
         "email_to": EMAIL_TO,
     }
 
+    logger.info(
+        f"[HEALTH] Health check requested - Model: {model_name}, CUDA: {torch.cuda.is_available()}"
+    )
+    return health_info
+
 
 @app.post("/webhook/wowza")
 async def wowza_webhook(request: Request, background: BackgroundTasks):
+    logger.info("[WEBHOOK] Received Wowza webhook request")
+    logger.info(f"[WEBHOOK] Request method: {request.method}")
+    logger.info(f"[WEBHOOK] Request URL: {request.url}")
+    logger.info(
+        f"[WEBHOOK] Client: {request.client.host if request.client else 'unknown'}"
+    )
+    logger.debug(f"[WEBHOOK] All headers: {dict(request.headers)}")
+
     require_ingest_key(request)
 
     try:
         data = await request.json()
-    except Exception:
+        logger.info(f"[WEBHOOK] Successfully parsed JSON payload with {len(data)} keys")
+        logger.debug(f"[WEBHOOK] Raw payload: {data}")
+    except Exception as e:
+        logger.error(f"[WEBHOOK] Failed to parse JSON body: {e}")
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
     # Normalize `event` → `event_type` if needed
     if "event_type" not in data and "event" in data:
+        logger.info(f"[WEBHOOK] Normalizing 'event' to 'event_type': {data['event']}")
         data["event_type"] = data["event"]
 
     try:
         webhook = WowzaWebhook.model_validate(data)
+        logger.info(f"[WEBHOOK] Successfully validated webhook data")
+        logger.info(f"[WEBHOOK] Event type: {webhook.event_type}")
+        logger.info(f"[WEBHOOK] Object ID: {webhook.object_id}")
+        logger.info(f"[WEBHOOK] Event ID: {webhook.event_id}")
+        logger.debug(f"[WEBHOOK] Payload keys: {list(webhook.payload.keys())}")
     except Exception as e:
+        logger.error(f"[WEBHOOK] Failed to validate payload: {e}")
         raise HTTPException(status_code=400, detail=f"Invalid payload: {e}")
 
     # Process in background, ACK fast
+    logger.info(f"[WEBHOOK] Adding webhook processing task to background queue")
     background.add_task(process_webhook, webhook.model_dump())
+    logger.info(f"[WEBHOOK] Webhook acknowledged and queued for processing")
     return {"received": True}
 
 
 def process_webhook(webhook_dict: Dict[str, Any]):
+    logger.info("[PROCESS] Starting webhook processing in background task")
     webhook = WowzaWebhook(**webhook_dict)
     event_type = webhook.event_type or ""
 
+    logger.info(f"[PROCESS] Processing event: {event_type}")
+    logger.info(f"[PROCESS] Object ID: {webhook.object_id}")
+    logger.debug(f"[PROCESS] Full webhook data: {webhook_dict}")
+
     if not looks_ready(event_type, webhook.payload):
+        logger.info(f"[PROCESS] Event {event_type} is not a ready event - ignoring")
         return  # ignore non-ready events
 
+    logger.info(
+        f"[PROCESS] Event indicates video is ready - proceeding with processing"
+    )
+
     download_url, source = find_download_url(webhook)
+    logger.info(f"[PROCESS] Download URL search result - Source: {source}")
+
     if not download_url:
-        print(
-            "[process] No download URL found (payload may lack encodings and no Wowza creds set)."
+        logger.error(
+            "[PROCESS] No download URL found (payload may lack encodings and no Wowza creds set)"
+        )
+        logger.debug(
+            f"[PROCESS] Webhook payload for failed URL lookup: {webhook.payload}"
         )
         return
 
+    logger.info(f"[PROCESS] Found download URL from {source}")
+    logger.debug(f"[PROCESS] Download URL: {download_url}")
+
     temp_path = None
     try:
+        logger.info("[PROCESS] Starting video download")
         # Preserve real extension if present
         suffix = ".mp4"
         m = re.search(r"\.(mp4|mov|m4a|mkv)(?:\?|$)", download_url, flags=re.I)
         if m:
             suffix = "." + m.group(1).lower()
+            logger.debug(f"[PROCESS] Detected file extension: {suffix}")
 
         temp_path = stream_download(download_url, suffix=suffix)
+        logger.info(f"[PROCESS] Video downloaded to temporary file: {temp_path}")
+
+        logger.info("[PROCESS] Starting transcription")
         transcript = transcribe_with_whisper(temp_path)
+        logger.info(f"[PROCESS] Transcription completed - {len(transcript)} characters")
+        logger.debug(f"[PROCESS] Transcript preview: {transcript[:200]}...")
 
         video_name = (
-            webhook.payload.get("name")
+            webhook.object_data.get("file_name")
+            or webhook.payload.get("name")
             or f"wowza_video_{webhook.object_id or 'unknown'}"
         )
+        logger.info(f"[PROCESS] Video name: {video_name}")
+
         subject = f"[Transcript] {video_name}"
         preview = transcript[:400] + ("…" if len(transcript) > 400 else "")
         body = (
@@ -502,20 +744,27 @@ def process_webhook(webhook_dict: Dict[str, Any]):
             f"Preview:\n{preview}\n"
         )
 
+        logger.info("[PROCESS] Sending email with transcript")
         send_email_with_attachment(
             subject=subject,
             body_text=body,
             filename=f"{video_name}.txt",
             file_bytes=transcript.encode("utf-8"),
         )
+        logger.info("[PROCESS] Email sent successfully")
+
     except Exception as e:
-        traceback.print_exc()
+        logger.error(f"[PROCESS] Error during webhook processing: {e}")
+        logger.error(f"[PROCESS] Traceback: {traceback.format_exc()}")
     finally:
         if temp_path and os.path.exists(temp_path):
             try:
                 os.remove(temp_path)
-            except Exception:
-                pass
+                logger.debug(f"[PROCESS] Cleaned up temporary file: {temp_path}")
+            except Exception as cleanup_err:
+                logger.warning(
+                    f"[PROCESS] Failed to cleanup temp file {temp_path}: {cleanup_err}"
+                )
 
 
 @app.get("/status", dependencies=[Depends(get_current_user)])
