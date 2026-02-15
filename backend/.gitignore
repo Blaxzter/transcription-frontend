@@ -2,5 +2,6 @@
 .env
 /venv
 /audio_files
+/logs
 db.json
 /models/

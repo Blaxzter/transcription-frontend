@@ -7,6 +7,7 @@ import tempfile
 import traceback
 import uuid
 import logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 from pathlib import Path
@@ -43,14 +44,32 @@ load_dotenv()
 # ----------------------------
 # Logging Configuration
 # ----------------------------
+# Create logs directory if it doesn't exist
+log_dir = os.path.join(os.path.dirname(__file__), "logs")
+os.makedirs(log_dir, exist_ok=True)
+
+# Create handlers
+console_handler = logging.StreamHandler()
+file_handler = RotatingFileHandler(
+    os.path.join(log_dir, "transcription.log"),
+    maxBytes=10 * 1024 * 1024,  # 10MB per file
+    backupCount=5  # Keep 5 backup files
+)
+
+# Create formatters and add to handlers
+log_format = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+console_handler.setFormatter(log_format)
+file_handler.setFormatter(log_format)
+
+# Configure root logger
 logging.basicConfig(
     level=logging.DEBUG,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-    ],
+    handlers=[console_handler, file_handler],
 )
 logger = logging.getLogger(__name__)
+logger.info("=" * 80)
+logger.info("Transcription Backend Starting Up")
+logger.info("=" * 80)
 
 # ----------------------------
 # Wowza Webhook Config
@@ -175,6 +194,8 @@ transcription_in_progress = False
 transcription_text = ""
 transcription_chunks = []
 transcription_file_name = ""
+transcription_error = None
+transcription_error_traceback = None
 
 
 class Token(BaseModel):
@@ -778,7 +799,15 @@ def start_transcription_process(transcript_id, audio_file_path):
     global transcription_in_progress
     global transcription_text
     global transcription_chunks
+    global transcription_error
+    global transcription_error_traceback
+    
+    logger.info(f"[TRANSCRIBE] Starting transcription process for job {transcript_id}")
+    logger.info(f"[TRANSCRIBE] Audio file: {audio_file_path}")
+    
     transcription_in_progress = transcript_id
+    transcription_error = None
+    transcription_error_traceback = None
 
     def end_callback(end_data):
         process_queue(transcript_id)
@@ -794,10 +823,23 @@ def process_queue(transcript_id):
     global transcription_text
     global transcription_chunks
     global transcription_file_name
+    global transcription_error
+    global transcription_error_traceback
     global lang_model
 
     for data, fished in lang_model.empty_process_queue(transcript_id):
         if fished:
+            # Check if this is an error
+            if data.get("is_error"):
+                logger.error(f"[TRANSCRIBE] Job {transcript_id} failed with error: {data.get('error')}")
+                logger.error(f"[TRANSCRIBE] Traceback:\n{data.get('traceback')}")
+                transcription_error = data.get("error")
+                transcription_error_traceback = data.get("traceback")
+                transcription_in_progress = None
+                # Don't store the transcription in the database if it failed
+                return
+            
+            # Success case
             data = {
                 "id": transcript_id,
                 "text": transcription_text.strip() if transcription_text else "",
@@ -810,8 +852,10 @@ def process_queue(transcript_id):
             if not transcripts.contains(transcript_model.id == transcript_id):
                 # store transcript in 'transcripts' under name uuid
                 transcripts.insert(data)
+                logger.info(f"[TRANSCRIBE] Job {transcript_id} completed successfully and saved to database")
             else:
                 transcripts.update(data, transcript_model.id == transcript_id)
+                logger.info(f"[TRANSCRIBE] Job {transcript_id} completed successfully and updated in database")
 
             transcription_in_progress = None
         else:
@@ -831,6 +875,8 @@ def process_queue(transcript_id):
 
 
 def cut_audio(input_file, start_time, duration, output_file):
+    logger.info(f"[AUDIO] Cutting audio file: {input_file}")
+    logger.info(f"[AUDIO] Start time: {start_time}, Duration: {duration}")
 
     path_path = Path(output_file)
     # change to append cut_ on filename
@@ -838,12 +884,22 @@ def cut_audio(input_file, start_time, duration, output_file):
 
     # Command to cut the audio
     cmd_cut = f'ffmpeg -i "{input_file}" -ss {start_time} -to {duration} -acodec copy "{new_output_file}"'
-    subprocess.run(cmd_cut, shell=True)
+    
+    try:
+        result = subprocess.run(cmd_cut, shell=True, capture_output=True, text=True)
+        if result.returncode != 0:
+            logger.error(f"[AUDIO] FFmpeg error: {result.stderr}")
+            raise Exception(f"Failed to cut audio: {result.stderr}")
+        logger.info(f"[AUDIO] Audio cut successfully")
+    except Exception as e:
+        logger.error(f"[AUDIO] Failed to cut audio: {str(e)}")
+        raise
 
     # remove old file
     os.remove(input_file)
     # rename new file
     os.rename(new_output_file, output_file)
+    logger.info(f"[AUDIO] Audio file saved to: {output_file}")
 
 
 @app.post("/transcribe", dependencies=[Depends(get_current_user)])
@@ -852,13 +908,19 @@ async def upload_audio_file(
     start=Form(),
     end=Form(),
 ):
+    logger.info(f"[API] Received transcription request for file: {files.filename}")
+    logger.info(f"[API] Start: {start}, End: {end}")
+    
     # Rest of the code...
     audio_bytes = await files.read()
+    logger.info(f"[API] File size: {len(audio_bytes)} bytes")
 
     if transcription_in_progress:
+        logger.warning(f"[API] Transcription already in progress: {transcription_in_progress}")
         raise HTTPException(status_code=400, detail="Transcription already in progress")
 
     transcript_id = str(uuid.uuid4())
+    logger.info(f"[API] Generated transcript ID: {transcript_id}")
 
     file_type = files.filename.split(".")[-1]
     global transcription_file_name
@@ -867,14 +929,29 @@ async def upload_audio_file(
     audio_file_path = os.path.join(
         file_path, "audio_files", transcript_id + "." + file_type
     )
-    with open(audio_file_path, "wb") as f:
-        f.write(audio_bytes)
+    
+    try:
+        with open(audio_file_path, "wb") as f:
+            f.write(audio_bytes)
+        logger.info(f"[API] Audio file saved to: {audio_file_path}")
 
-    cut_audio(audio_file_path, start, end, audio_file_path)
+        cut_audio(audio_file_path, start, end, audio_file_path)
 
-    start_transcription_process(transcript_id, audio_file_path)
-
-    return {"transcription_id": transcript_id}
+        start_transcription_process(transcript_id, audio_file_path)
+        
+        logger.info(f"[API] Transcription process started successfully for {transcript_id}")
+        return {"transcription_id": transcript_id}
+    except Exception as e:
+        logger.error(f"[API] Failed to process audio file: {str(e)}")
+        logger.error(f"[API] Traceback: {traceback.format_exc()}")
+        # Clean up the file if it was created
+        if os.path.exists(audio_file_path):
+            try:
+                os.remove(audio_file_path)
+                logger.info(f"[API] Cleaned up audio file: {audio_file_path}")
+            except:
+                pass
+        raise HTTPException(status_code=500, detail=f"Failed to process audio file: {str(e)}")
 
 
 @app.get("/transcriptions", dependencies=[Depends(get_current_user)])
@@ -888,13 +965,31 @@ async def get_transcription(transcript_id: str, response: Response):
     global transcription_text
     global transcription_chunks
     global transcription_file_name
+    global transcription_error
+    global transcription_error_traceback
     global lang_model
 
     if transcription_in_progress == transcript_id:
         process_queue(transcript_id)
 
+        # Check if there was an error
+        if transcription_error:
+            logger.error(f"[API] Returning error status for job {transcript_id}")
+            response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+            return dict(
+                status="error",
+                error=transcription_error,
+                traceback=transcription_error_traceback,
+                text=transcription_text,
+                chunks=transcription_chunks
+            )
+
         response.status_code = status.HTTP_202_ACCEPTED
-        return dict(text=transcription_text, chunks=transcription_chunks)
+        return dict(
+            status="in_progress",
+            text=transcription_text, 
+            chunks=transcription_chunks
+        )
 
     # check if transcript exists
     if not transcripts.contains(transcript_model.id == transcript_id):
