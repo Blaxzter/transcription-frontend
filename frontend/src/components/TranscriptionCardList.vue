@@ -1,6 +1,9 @@
 <script>
 import TranscriptionCard from '@/components/TranscriptionCard.vue'
 import { useTranscriptionsStore } from '@/stores/transcriptions'
+import dayjs from 'dayjs'
+import customParseFormat from 'dayjs/plugin/customParseFormat'
+dayjs.extend(customParseFormat)
 
 export default {
   name: 'TranscriptionCardList',
@@ -27,8 +30,8 @@ export default {
     transcriptions() {
       const transcriptions = [...this.transcription_store.get_transcriptions]
       return transcriptions.sort((a, b) => {
-        const dateA = new Date(a.created_at || a.timestamp || 0)
-        const dateB = new Date(b.created_at || b.timestamp || 0)
+        const dateA = dayjs(a.created_at, 'DD.MM.YYYY HH:mm:ss')
+        const dateB = dayjs(b.created_at, 'DD.MM.YYYY HH:mm:ss')
         return this.sortOrder === 'newest' ? dateB - dateA : dateA - dateB
       })
     }
@@ -48,7 +51,7 @@ export default {
         @click="toggleSortOrder"
         variant="outlined"
         size="small"
-        class="align-self-center"
+        class="align-self-center mr-4"
       >
         <v-icon size="20" class="mr-1">
           {{ sortOrder === 'newest' ? 'mdi-sort-calendar-descending' : 'mdi-sort-calendar-ascending' }}
