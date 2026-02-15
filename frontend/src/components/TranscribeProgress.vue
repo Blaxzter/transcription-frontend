@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import WaveFormComponent from '@/components/WaveFormComponent.vue'
 import { Status, useTranscriptionStatusStore } from '@/stores/transcription_status'
+import { toast } from 'vue3-toastify'
 
 const transcription_status = useTranscriptionStatusStore()
 const { transcription_in_progress_id } = storeToRefs(transcription_status)
@@ -16,6 +17,15 @@ const selected_file = computed(() => {
 const current_transcription_status = computed(() => {
   return transcription_status.get_transcription_status
 })
+
+const stopTranscription = async () => {
+  const result = await transcription_status.stop_transcription()
+  if (result) {
+    toast.info('Transcription process has been stopped.')
+  } else {
+    toast.error('Failed to stop the transcription process.')
+  }
+}
 
 onMounted(async () => {
   await transcription_status.load_transcript_in_progress()
@@ -37,7 +47,13 @@ onMounted(async () => {
         current_transcription_status === Status.TRANSCRIBING && transcription_in_progress_id
       "
     >
-      <h2 class="mb-5">Transkription in Bearbeitung</h2>
+      <div class="d-flex align-center mb-5">
+        <h2>Transkription in Bearbeitung</h2>
+        <div class="flex-grow-1"></div>
+        <v-btn color="error" variant="tonal" prepend-icon="mdi-stop" @click="stopTranscription">
+          Transkription stoppen
+        </v-btn>
+      </div>
       <WaveFormComponent :transcription_in_progress_id="transcription_in_progress_id" />
     </div>
     <div v-else-if="files_model.length === 0">

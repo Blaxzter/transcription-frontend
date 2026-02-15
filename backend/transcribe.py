@@ -8,7 +8,13 @@ from typing import Optional, Tuple, Union, TYPE_CHECKING
 import numpy as np
 import torch
 import tqdm
-from whisper.audio import SAMPLE_RATE, N_FRAMES, HOP_LENGTH, pad_or_trim, log_mel_spectrogram
+from whisper.audio import (
+    SAMPLE_RATE,
+    N_FRAMES,
+    HOP_LENGTH,
+    pad_or_trim,
+    log_mel_spectrogram,
+)
 from whisper.decoding import DecodingOptions, DecodingResult
 from whisper.tokenizer import LANGUAGES, get_tokenizer
 from whisper.utils import exact_div, format_timestamp
@@ -18,19 +24,19 @@ if TYPE_CHECKING:
 
 
 def transcribe(
-        model: "Whisper",
-        audio: Union[str, np.ndarray, torch.Tensor],
-        *,
-        verbose: Optional[bool] = None,
-        temperature: Union[float, Tuple[float, ...]] = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
-        compression_ratio_threshold: Optional[float] = 2.4,
-        logprob_threshold: Optional[float] = -1.0,
-        no_speech_threshold: Optional[float] = 0.6,
-        condition_on_previous_text: bool = True,
-        process_queue = None,
-        end_callback = None,
-        job_id: uuid = None,
-        **decode_options,
+    model: "Whisper",
+    audio: Union[str, np.ndarray, torch.Tensor],
+    *,
+    verbose: Optional[bool] = None,
+    temperature: Union[float, Tuple[float, ...]] = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
+    compression_ratio_threshold: Optional[float] = 2.4,
+    logprob_threshold: Optional[float] = -1.0,
+    no_speech_threshold: Optional[float] = 0.6,
+    condition_on_previous_text: bool = True,
+    process_queue=None,
+    end_callback=None,
+    job_id: uuid = None,
+    **decode_options,
 ):
     """
     Transcribe an audio file using Whisper
@@ -75,7 +81,31 @@ def transcribe(
     the spoken language ("language"), which is detected when `decode_options["language"]` is None.
     """
 
-    print(f"Start transcribe process: {model.device} cuda: {torch.cuda.torch.cuda.is_available()}" )
+    print(
+        f"Start transcribe process: {model.device} cuda: {torch.cuda.torch.cuda.is_available()}"
+    )
+
+    # Check for stop signal function
+    def should_stop():
+        if process_queue is None:
+            return False
+        try:
+            # Check if there's a stop message in the queue without removing other messages
+            for _ in range(process_queue.qsize()):
+                try:
+                    # Get message without removing it
+                    data = process_queue.get_nowait()
+                    # Put it back
+                    process_queue.put(data)
+                    # Check if it's a stop signal
+                    if data.get("channel") == "control" and data.get("data") == "stop":
+                        print(f"Received stop signal for job {job_id}")
+                        return True
+                except Exception:
+                    pass
+            return False
+        except Exception:
+            return False
 
     dtype = torch.float16 if decode_options.get("fp16", True) else torch.float32
     if model.device == torch.device("cpu"):
@@ -95,19 +125,25 @@ def transcribe(
             decode_options["language"] = "en"
         else:
             if verbose:
-                print("Detecting language using up to the first 30 seconds. Use `--language` to specify the language")
+                print(
+                    "Detecting language using up to the first 30 seconds. Use `--language` to specify the language"
+                )
             segment = pad_or_trim(mel, N_FRAMES).to(model.device).to(dtype)
             _, probs = model.detect_language(segment)
-            decode_options["language"] = max(probs, key = probs.get)
+            decode_options["language"] = max(probs, key=probs.get)
             if verbose is not None:
-                print(f"Detected language: {LANGUAGES[decode_options['language']].title()}")
+                print(
+                    f"Detected language: {LANGUAGES[decode_options['language']].title()}"
+                )
 
     language = decode_options["language"]
     task = decode_options.get("task", "transcribe")
-    tokenizer = get_tokenizer(model.is_multilingual, language = language, task = task)
+    tokenizer = get_tokenizer(model.is_multilingual, language=language, task=task)
 
     def decode_with_fallback(segment: torch.Tensor) -> DecodingResult:
-        temperatures = [temperature] if isinstance(temperature, (int, float)) else temperature
+        temperatures = (
+            [temperature] if isinstance(temperature, (int, float)) else temperature
+        )
         decode_result = None
 
         for t in temperatures:
@@ -120,13 +156,19 @@ def transcribe(
                 # disable best_of when t == 0
                 kwargs.pop("best_of", None)
 
-            options = DecodingOptions(**kwargs, temperature = t)
+            options = DecodingOptions(**kwargs, temperature=t)
             decode_result = model.decode(segment, options)
 
             needs_fallback = False
-            if compression_ratio_threshold is not None and decode_result.compression_ratio > compression_ratio_threshold:
+            if (
+                compression_ratio_threshold is not None
+                and decode_result.compression_ratio > compression_ratio_threshold
+            ):
                 needs_fallback = True  # too repetitive
-            if logprob_threshold is not None and decode_result.avg_logprob < logprob_threshold:
+            if (
+                logprob_threshold is not None
+                and decode_result.avg_logprob < logprob_threshold
+            ):
                 needs_fallback = True  # average log probability is too low
 
             if not needs_fallback:
@@ -139,7 +181,7 @@ def transcribe(
         N_FRAMES, model.dims.n_audio_ctx
     )  # mel frames per output token: 2
     time_precision = (
-            input_stride * HOP_LENGTH / SAMPLE_RATE
+        input_stride * HOP_LENGTH / SAMPLE_RATE
     )  # time per output token: 0.02 (seconds)
     all_tokens = []
     all_segments = []
@@ -151,9 +193,11 @@ def transcribe(
         all_tokens.extend(initial_prompt)
 
     def add_segment(
-            *, start: float, end: float, text_tokens: torch.Tensor, result: DecodingResult
+        *, start: float, end: float, text_tokens: torch.Tensor, result: DecodingResult
     ):
-        text = tokenizer.decode([token for token in text_tokens if token < tokenizer.eot])
+        text = tokenizer.decode(
+            [token for token in text_tokens if token < tokenizer.eot]
+        )
         if len(text.strip()) == 0:  # skip empty text output
             return
 
@@ -173,14 +217,11 @@ def transcribe(
         )
         if verbose:
             process_queue.put(
-                dict(channel = 'message',
-                     data = dict(
-                         start = start,
-                         end = end,
-                         text = text,
-                         copy = True
-                     ),
-                     job_id = job_id)
+                dict(
+                    channel="message",
+                    data=dict(start=start, end=end, text=text, copy=True),
+                    job_id=job_id,
+                )
             )
             print(f"[{format_timestamp(start)} --> {format_timestamp(end)}] {text}")
 
@@ -188,8 +229,15 @@ def transcribe(
     num_frames = mel.shape[-1]
     previous_seek_value = seek
 
-    with tqdm.tqdm(total = num_frames, unit = 'frames', disable = verbose is not False) as pbar:
+    with tqdm.tqdm(
+        total=num_frames, unit="frames", disable=verbose is not False
+    ) as pbar:
         while seek < num_frames:
+            # Check if we should stop processing
+            if should_stop():
+                print(f"Stopping transcription for job {job_id}")
+                break
+
             timestamp_offset = float(seek * HOP_LENGTH / SAMPLE_RATE)
             segment = pad_or_trim(mel[:, seek:], N_FRAMES).to(model.device).to(dtype)
             segment_duration = segment.shape[-1] * HOP_LENGTH / SAMPLE_RATE
@@ -201,52 +249,67 @@ def transcribe(
             if no_speech_threshold is not None:
                 # no voice activity check
                 should_skip = result.no_speech_prob > no_speech_threshold
-                if logprob_threshold is not None and result.avg_logprob > logprob_threshold:
+                if (
+                    logprob_threshold is not None
+                    and result.avg_logprob > logprob_threshold
+                ):
                     # don't skip if the logprob is high enough, despite the no_speech_prob
                     should_skip = False
 
                 if should_skip:
-                    seek += segment.shape[-1]  # fast-forward to the next segment boundary
+                    seek += segment.shape[
+                        -1
+                    ]  # fast-forward to the next segment boundary
                     continue
 
             timestamp_tokens: torch.Tensor = tokens.ge(tokenizer.timestamp_begin)
-            consecutive = torch.where(timestamp_tokens[:-1] & timestamp_tokens[1:])[0].add_(1)
-            if len(consecutive) > 0:  # if the output contains two consecutive timestamp tokens
+            consecutive = torch.where(timestamp_tokens[:-1] & timestamp_tokens[1:])[
+                0
+            ].add_(1)
+            if (
+                len(consecutive) > 0
+            ):  # if the output contains two consecutive timestamp tokens
                 last_slice = 0
                 for current_slice in consecutive:
                     sliced_tokens = tokens[last_slice:current_slice]
                     start_timestamp_position = (
-                            sliced_tokens[0].item() - tokenizer.timestamp_begin
+                        sliced_tokens[0].item() - tokenizer.timestamp_begin
                     )
                     end_timestamp_position = (
-                            sliced_tokens[-1].item() - tokenizer.timestamp_begin
+                        sliced_tokens[-1].item() - tokenizer.timestamp_begin
                     )
                     add_segment(
-                        start = timestamp_offset + start_timestamp_position * time_precision,
-                        end = timestamp_offset + end_timestamp_position * time_precision,
-                        text_tokens = sliced_tokens[1:-1],
-                        result = result,
+                        start=timestamp_offset
+                        + start_timestamp_position * time_precision,
+                        end=timestamp_offset + end_timestamp_position * time_precision,
+                        text_tokens=sliced_tokens[1:-1],
+                        result=result,
                     )
                     last_slice = current_slice
                 last_timestamp_position = (
-                        tokens[last_slice - 1].item() - tokenizer.timestamp_begin
+                    tokens[last_slice - 1].item() - tokenizer.timestamp_begin
                 )
                 seek += last_timestamp_position * input_stride
                 all_tokens.extend(tokens[: last_slice + 1].tolist())
             else:
                 duration = segment_duration
                 timestamps = tokens[timestamp_tokens.nonzero().flatten()]
-                if len(timestamps) > 0 and timestamps[-1].item() != tokenizer.timestamp_begin:
+                if (
+                    len(timestamps) > 0
+                    and timestamps[-1].item() != tokenizer.timestamp_begin
+                ):
                     # no consecutive timestamps but it has a timestamp; use the last one.
                     # single timestamp at the end means no speech after the last timestamp.
-                    last_timestamp_position = timestamps[-1].item() - tokenizer.timestamp_begin
+                    last_timestamp_position = (
+                        timestamps[-1].item() - tokenizer.timestamp_begin
+                    )
                     duration = last_timestamp_position * time_precision
 
                 add_segment(
-                    start = timestamp_offset,
-                    end = timestamp_offset + duration,
-                    text_tokens = tokens,
-                    result = result,
+                    start=timestamp_offset,
+                    end=timestamp_offset + duration,
+                    text_tokens=tokens,
+                    result=result,
                 )
 
                 seek += segment.shape[-1]
@@ -258,11 +321,17 @@ def transcribe(
 
             # update progress bar
             pbar.update(min(num_frames, seek) - previous_seek_value)
-            process_queue.put(dict(channel = 'timer', data = dict(timer = seek), job_id = job_id))
+            process_queue.put(
+                dict(channel="timer", data=dict(timer=seek), job_id=job_id)
+            )
             previous_seek_value = seek
 
-    process_queue.put(dict(channel = 'message', job_id = job_id, data = 'end'))
-    end_data = dict(text = tokenizer.decode(all_tokens[len(initial_prompt):]), segments = all_segments, language = language)
+    process_queue.put(dict(channel="message", job_id=job_id, data="end"))
+    end_data = dict(
+        text=tokenizer.decode(all_tokens[len(initial_prompt) :]),
+        segments=all_segments,
+        language=language,
+    )
     if end_callback:
         end_callback(end_data)
 
