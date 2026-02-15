@@ -9,6 +9,7 @@ import whisper
 from tinydb import Query, where
 
 from transcribe import transcribe
+import torch
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -32,7 +33,8 @@ class LangModel:
             os.path.dirname(os.path.abspath(__file__)), "models"
         )
         print(f"Load Model: {self.model_name} into {model_path}")
-        self.model = whisper.load_model(self.model_name, download_root=model_path)
+        self.model = whisper.load_model(self.model_name, download_root = model_path)
+        print(f"finished: {self.model.device} cuda: {torch.cuda.torch.cuda.is_available()}" )
         # self.model = whisper.load_model("tiny")
         print("finished")
 
@@ -130,6 +132,5 @@ class LangModel:
                     copy=data["data"]["copy"],
                 ), False
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     lang_model = LangModel()
