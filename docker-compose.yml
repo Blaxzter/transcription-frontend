@@ -20,19 +20,27 @@ services:
       LETSENCRYPT_HOST: transcribe.fabraham.dev
       LETSENCRYPT_EMAIL: mail@fabraham.dev
 
-  # transcribe-api:
-  #   build: ./backend/
-  #   restart:
-  #     always
-  #   ports:
-  #     - "6545:6545"
-  #   networks:
-  #     - nginx-net
-  #   volumes:
-  #     - ./backend/models:/build/models
-  #     - ./backend/audio_files:/build/audio_files
-  #     - ./backend/db.json:/build/db.json
-  #   environment:
-  #     VIRTUAL_HOST: transcribe-api.fabraham.dev
-  #     LETSENCRYPT_HOST: transcribe-api.fabraham.dev
-  #     LETSENCRYPT_EMAIL: mail@fabraham.dev
+#  transcribe-api:
+#    build: ./backend/
+#    restart:
+#      always
+#    ports:
+#      - "6545:6545"
+#    networks:
+#      - nginx-net
+#    volumes:
+#      - ./backend/models:/build/models
+#      - ./backend/audio_files:/build/audio_files
+#      - ./backend/db.json:/build/db.json
+#    environment:
+#      VIRTUAL_HOST: transcribe-api.fabraham.dev
+#      LETSENCRYPT_HOST: transcribe-api.fabraham.dev
+#      LETSENCRYPT_EMAIL: mail@fabraham.dev
+#    runtime: nvidia
+#    deploy:
+#      resources:
+#        reservations:
+#          devices:
+#            - driver: nvidia
+#              count: all
+#              capabilities: [ gpu ]

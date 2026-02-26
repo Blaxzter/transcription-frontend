@@ -36,6 +36,7 @@ export default {
     last_transcript: null,
     text_progress: '',
     upload_progress: 0,
+    error_message: null,
 
     // original region
     original_region_start: 0,
@@ -224,8 +225,16 @@ export default {
           this.start_check_for_update(response.data.transcription_id)
         })
         .catch((err) => {
+          // Extract error message from response
+          if (err.response && err.response.data && err.response.data.detail) {
+            this.error_message = err.response.data.detail
+          } else if (err.response && err.response.data && err.response.data.error) {
+            this.error_message = err.response.data.error
+          } else {
+            this.error_message = err.message || 'Failed to upload file'
+          }
           this.statusStore.set_status(Status.ERROR)
-          console.log(err)
+          console.error('Upload error:', err)
         })
     },
 
@@ -235,8 +244,18 @@ export default {
         axios
           .get(`${import.meta.env.VITE_BACKEND_URL}/transcriptions/${transcription_id}`)
           .then((response) => {
+            // Check if transcription encountered an error
+            if (response.data.status === 'error' || response.data.error) {
+              this.error_message = response.data.error || 'An unknown error occurred'
+              this.statusStore.set_status('error')
+              clearInterval(interval)
+              console.error('Transcription error:', response.data.error)
+              if (response.data.traceback) {
+                console.error('Traceback:', response.data.traceback)
+              }
+            }
             // Check if transcription is completed based on response data
-            if (response.data.status === 'completed' || response.data.completed === true) {
+            else if (response.data.status === 'completed' || response.data.completed === true) {
               this.last_transcript = response.data
               this.statusStore.set_status('done')
               clearInterval(interval)
@@ -246,9 +265,18 @@ export default {
               console.log('Transcription progress:', this.text_progress)
             }
           })
-          .catch(() => {
+          .catch((error) => {
+            // Handle HTTP errors (500, 404, etc.)
+            if (error.response && error.response.data && error.response.data.error) {
+              this.error_message = error.response.data.error
+            } else if (error.response && error.response.data && error.response.data.detail) {
+              this.error_message = error.response.data.detail
+            } else {
+              this.error_message = error.message || 'Connection error occurred'
+            }
             this.statusStore.set_status('error')
             clearInterval(interval)
+            console.error('Transcription request failed:', error)
           })
       }, 1000)
     },
@@ -401,8 +429,13 @@ export default {
   <div v-show="status === 'error'">
     <div>
       <v-alert type="error" border="start" class="mb-5" icon="mdi-alert">
-        Es ist ein Fehler aufgetreten.<br />
-        Bitte kontaktiere Freddy.
+        <div class="text-h6 mb-2">Es ist ein Fehler aufgetreten</div>
+        <div v-if="error_message" class="error-details">
+          <strong>Fehler:</strong> {{ error_message }}
+        </div>
+        <div v-else>
+          Bitte kontaktiere Freddy.
+        </div>
       </v-alert>
     </div>
   </div>

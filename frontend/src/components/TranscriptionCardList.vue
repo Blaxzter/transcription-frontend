@@ -1,6 +1,9 @@
 <script>
 import TranscriptionCard from '@/components/TranscriptionCard.vue'
 import { useTranscriptionsStore } from '@/stores/transcriptions'
+import dayjs from 'dayjs'
+import customParseFormat from 'dayjs/plugin/customParseFormat'
+dayjs.extend(customParseFormat)
 
 export default {
   name: 'TranscriptionCardList',
@@ -9,7 +12,8 @@ export default {
   },
   data: () => ({
     transcription_store: useTranscriptionsStore(),
-    transcripts_loading: true
+    transcripts_loading: true,
+    sortOrder: 'newest' // 'newest' or 'oldest'
   }),
   mounted() {
     // get previous transcription_store
@@ -17,9 +21,19 @@ export default {
       this.transcripts_loading = false
     })
   },
+  methods: {
+    toggleSortOrder() {
+      this.sortOrder = this.sortOrder === 'newest' ? 'oldest' : 'newest'
+    }
+  },
   computed: {
     transcriptions() {
-      return this.transcription_store.get_transcriptions
+      const transcriptions = [...this.transcription_store.get_transcriptions]
+      return transcriptions.sort((a, b) => {
+        const dateA = dayjs(a.created_at, 'DD.MM.YYYY HH:mm:ss')
+        const dateB = dayjs(b.created_at, 'DD.MM.YYYY HH:mm:ss')
+        return this.sortOrder === 'newest' ? dateB - dateA : dateA - dateB
+      })
     }
   }
 }
@@ -33,6 +47,17 @@ export default {
         <h2>Previous Transcriptions</h2>
       </div>
       <div class="flex-grow-1"></div>
+      <v-btn
+        @click="toggleSortOrder"
+        variant="outlined"
+        size="small"
+        class="align-self-center mr-4"
+      >
+        <v-icon size="20" class="mr-1">
+          {{ sortOrder === 'newest' ? 'mdi-sort-calendar-descending' : 'mdi-sort-calendar-ascending' }}
+        </v-icon>
+        {{ sortOrder === 'newest' ? 'Newest First' : 'Oldest First' }}
+      </v-btn>
     </div>
     <div v-if="transcripts_loading">
       <div class="d-flex pa-8 justify-space-around align-center">
