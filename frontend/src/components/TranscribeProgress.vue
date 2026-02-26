@@ -10,8 +10,11 @@ const { transcription_in_progress_id } = storeToRefs(transcription_status)
 const files_model = ref([])
 
 const selected_file = computed(() => {
-  if (files_model.value.length === 0) return null
-  return files_model.value[0]
+  if (!files_model.value) return null
+  if (Array.isArray(files_model.value)) {
+    return files_model.value[0] ?? null
+  }
+  return files_model.value // Vuetify stores a single File when `multiple` is not set
 })
 
 const current_transcription_status = computed(() => {
@@ -56,7 +59,7 @@ onMounted(async () => {
       </div>
       <WaveFormComponent :transcription_in_progress_id="transcription_in_progress_id" />
     </div>
-    <div v-else-if="files_model.length === 0">
+    <div v-else-if="!selected_file">
       <h2 class="mb-5">Lade hier neue Audio Datei hoch.</h2>
 
       <v-alert type="info" border="start" class="text-body-1 mb-5">
