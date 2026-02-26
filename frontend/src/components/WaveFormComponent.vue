@@ -72,7 +72,7 @@ export default {
     }
   },
   unmounted() {
-    this.wavesurfer.destroy()
+    this.wavesurfer?.destroy()
   },
   computed: {
     loading_percentage_rounded() {
