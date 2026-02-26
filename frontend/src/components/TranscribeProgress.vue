@@ -87,7 +87,7 @@ onMounted(async () => {
           </template>
         </v-tooltip>
       </div>
-      <WaveFormComponent :key="selected_file?.name + selected_file?.lastModified" :file="selected_file" />
+      <WaveFormComponent :file="selected_file" />
     </div>
   </div>
 </template>

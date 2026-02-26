@@ -64,16 +64,26 @@ export default {
   },
   mounted() {
     this.statusStore.set_status('idle')
-    console.log(this.transcription_in_progress_id)
+    console.log('[WaveForm] mounted, transcription_in_progress_id:', this.transcription_in_progress_id, 'file:', !!this.file, 'url:', !!this.url)
     if (this.transcription_in_progress_id) {
       this.statusStore.set_status('transcribing')
       this.start_check_for_update(this.transcription_in_progress_id)
-    } else {
+    } else if (this.file || this.url) {
       this.load_wave()
+    } else {
+      console.warn('[WaveForm] mounted with no file/url — waiting for prop update')
     }
   },
   unmounted() {
     this.wavesurfer?.destroy()
+  },
+  watch: {
+    file(newFile) {
+      if (newFile && !this.wavesurfer) {
+        console.log('[WaveForm] file prop arrived after mount, calling load_wave()')
+        this.load_wave()
+      }
+    }
   },
   computed: {
     loading_percentage_rounded() {

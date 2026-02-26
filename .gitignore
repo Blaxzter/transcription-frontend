@@ -1,2 +1,4 @@
 .vscode/sftp.json
 **/*.pyc
+backend/__pycache__/LangModel.cpython-311.pyc
+backend/__pycache__/transcribe.cpython-311.pyc
