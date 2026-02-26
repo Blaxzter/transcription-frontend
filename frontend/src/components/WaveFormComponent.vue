@@ -91,60 +91,84 @@ export default {
   },
   methods: {
     load_wave() {
-      this.wavesurfer = WaveSurfer.create({
-        container: '#waveform',
-        waveColor: '#2196f3',
-        progressColor: '#003a69',
-        backend: 'MediaElement',
-        hideScrollbar: true,
-        fetchParams: {
-          headers: {
-            Authorization: 'Bearer ' + this.user.get_user
-          }
-        },
-        minPxPerSec: 0,
-        barGap: 2,
-        barWidth: 2,
-        barRadius: 3
-      })
+      console.log('[WaveForm] load_wave() called', { file: !!this.file, url: !!this.url })
 
-      this.regions = this.wavesurfer.registerPlugin(RegionsPlugin.create())
-      // this.wavesurfer.registerPlugin(TimelinePlugin.create())
-      const hover = this.wavesurfer.registerPlugin(
-        HoverPlugin.create({
-          lineColor: '#ff0000',
-          lineWidth: 2,
-          labelBackground: '#555',
-          labelColor: '#fff',
-          labelSize: '11px'
+      try {
+        this.wavesurfer = WaveSurfer.create({
+          container: '#waveform',
+          waveColor: '#2196f3',
+          progressColor: '#003a69',
+          backend: 'MediaElement',
+          hideScrollbar: true,
+          fetchParams: {
+            headers: {
+              Authorization: 'Bearer ' + this.user.get_user
+            }
+          },
+          minPxPerSec: 0,
+          barGap: 2,
+          barWidth: 2,
+          barRadius: 3
         })
-      )
-      hover.on('hover', (position) => {
-        this.hover_pos = position
-      })
+        console.log('[WaveForm] WaveSurfer.create() OK')
+      } catch (e) {
+        console.error('[WaveForm] WaveSurfer.create() failed:', e)
+        return
+      }
 
-      this.wavesurfer.registerPlugin(
-        MinimapPlugin.create({
-          height: 20,
-          waveColor: '#818181',
-          progressColor: '#2c2c2c'
-          // the Minimap takes all the same options as the WaveSurfer itself
+      try {
+        this.regions = this.wavesurfer.registerPlugin(RegionsPlugin.create())
+        // this.wavesurfer.registerPlugin(TimelinePlugin.create())
+        const hover = this.wavesurfer.registerPlugin(
+          HoverPlugin.create({
+            lineColor: '#ff0000',
+            lineWidth: 2,
+            labelBackground: '#555',
+            labelColor: '#fff',
+            labelSize: '11px'
+          })
+        )
+        hover.on('hover', (position) => {
+          this.hover_pos = position
         })
-      )
 
+        this.wavesurfer.registerPlugin(
+          MinimapPlugin.create({
+            height: 20,
+            waveColor: '#818181',
+            progressColor: '#2c2c2c'
+          })
+        )
+        console.log('[WaveForm] plugins registered OK')
+      } catch (e) {
+        console.error('[WaveForm] plugin registration failed:', e)
+      }
+
+      this.wavesurfer.on('error', (e) => {
+        console.error('[WaveForm] WaveSurfer error event:', e)
+      })
       this.wavesurfer.on('load', () => {
-        console.log('load')
+        console.log('[WaveForm] event: load')
         this.loading_finished = false
       })
+      this.wavesurfer.on('loading', (percentage) => {
+        console.log('[WaveForm] event: loading', percentage)
+        if (this.url) {
+          if (percentage === 100) {
+            this.loading_intermediate = true
+          }
+          this.loading_percentage = percentage
+        }
+      })
       this.wavesurfer.on('ready', () => {
-        console.log('ready')
+        console.log('[WaveForm] event: ready')
         this.loading_finished = true
       })
 
       this.wavesurfer.on('decode', (duration) => {
         if (this.region !== null) return
 
-        console.log('decode', duration)
+        console.log('[WaveForm] event: decode', duration)
         this.audio_duration = duration
 
         this.region = this.regions.addRegion({
@@ -168,26 +192,17 @@ export default {
       })
 
       if (this.url) {
-        this.wavesurfer.on('loading', (percentage) => {
-          console.log('loading', percentage)
-          if (percentage === 100) {
-            this.loading_intermediate = true
-          }
-          this.loading_percentage = percentage
-        })
+        console.log('[WaveForm] loading from URL')
         this.wavesurfer.load(this.url)
       } else if (this.file) {
-        console.log(
-          'file',
-          this.file,
-          this.file.type,
-          this.file.name,
-          this.file.size,
-          this.file.lastModified
-        )
+        console.log('[WaveForm] loading blob:', this.file.name, this.file.type, this.file.size)
         this.loading_percentage = 100
         this.loading_intermediate = true
-        this.wavesurfer.loadBlob(this.file)
+        this.wavesurfer.loadBlob(this.file).catch((e) => {
+          console.error('[WaveForm] loadBlob() failed:', e)
+        })
+      } else {
+        console.warn('[WaveForm] no file or url provided')
       }
     },
     open_transcript() {
